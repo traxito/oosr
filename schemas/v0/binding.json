@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oosr.dev/schema/v0/binding.json",
+  "title": "OOSR Tag Binding",
+  "description": "Unique within a hub: (scope_id, tag_family, tag_id) -> object.",
+  "type": "object",
+  "required": ["scope_id", "tag_family", "tag_id", "tag_size_mm"],
+  "properties": {
+    "scope_id": { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" },
+    "tag_family": { "enum": ["tag36h11", "tag25h9", "tag16h5", "tagStandard41h12", "tagStandard52h13"] },
+    "tag_id": { "type": "integer", "minimum": 0 },
+    "tag_size_mm": { "type": "number", "exclusiveMinimum": 0, "description": "Required: without it 6DoF pose estimation is wrong." },
+    "object": { "type": "string", "pattern": "^urn:oosr:obj:[a-z0-9-]+:[0-9a-f-]{36}$" },
+    "bound_at": { "type": "string", "format": "date-time" },
+    "bound_by": { "type": "string", "pattern": "^urn:oosr:(robot|hub):" }
+  },
+  "additionalProperties": false
+}

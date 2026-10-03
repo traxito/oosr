@@ -1,0 +1,7 @@
+{
+  "oosr": "0.1",
+  "robot": "urn:oosr:robot:acme:sn-88412",
+  "model": "acme/helper-arm-2",
+  "primitives": ["navigate_to", "inspect", "measure:soil_moisture", "dispense:water", "grasp", "place", "notify_human"],
+  "limits": { "payload_kg": 1.5, "reach_m": 0.8, "dispense_max_ml": 1000 }
+}

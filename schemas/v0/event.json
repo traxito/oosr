@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oosr.dev/schema/v0/event.json",
+  "title": "OOSR Event (CloudEvents 1.0 + OOSR extensions)",
+  "description": "CloudEvents extension attributes must be scalar, so oosrsig is a detached JWS compact string over the JCS canonical form of the event without oosrsig.",
+  "type": "object",
+  "required": ["specversion", "id", "source", "type", "subject", "time", "datacontenttype", "oosrlamport", "oosrsig", "data"],
+  "propertyNames": { "pattern": "^[a-z0-9]{1,20}$" },
+  "properties": {
+    "specversion": { "const": "1.0" },
+    "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "source": { "type": "string", "pattern": "^urn:oosr:(robot:[a-z0-9-]+:[A-Za-z0-9._-]+|hub:[a-z0-9-]+)$" },
+    "type": {
+      "type": "string",
+      "pattern": "^oosr\\.(object\\.(enrolled|updated)|binding\\.revoked|observation\\.recorded|task\\.[a-z][a-z0-9_]{0,40}\\.(started|completed|failed)|approval\\.(granted|denied)|alert\\.acknowledged)$"
+    },
+    "subject": { "type": "string", "pattern": "^urn:oosr:obj:[a-z0-9-]+:[0-9a-f-]{36}$" },
+    "time": { "type": "string", "format": "date-time" },
+    "datacontenttype": { "const": "application/json" },
+    "oosrskill": { "type": "string", "pattern": "^skill:[a-z0-9.-]+(/[a-z0-9._-]+)*/[a-z0-9-]+@(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "oosrlamport": { "type": "integer", "minimum": 0 },
+    "oosrsig": { "type": "string", "pattern": "^[A-Za-z0-9_-]+\\.\\.[A-Za-z0-9_-]+$" },
+    "data": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "pattern": "^oosr\\.task\\." } } },
+      "then": { "required": ["oosrskill"] }
+    },
+    {
+      "if": { "properties": { "type": { "pattern": "^oosr\\.task\\.[a-z0-9_]+\\.started$" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "lease_s": { "type": "integer", "minimum": 1, "maximum": 3600 },
+              "approval_id": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "pattern": "^oosr\\.task\\.[a-z0-9_]+\\.failed$" } } },
+      "then": {
+        "properties": {
+          "data": { "type": "object", "required": ["code"], "properties": { "code": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "oosr.observation.recorded" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "measurements": {
+                "type": "object",
+                "propertyNames": { "enum": ["soil_moisture", "light_lux", "temperature"] },
+                "additionalProperties": { "type": "number" }
+              },
+              "notify": {
+                "type": "object",
+                "required": ["severity", "message_key"],
+                "properties": {
+                  "severity": { "enum": ["info", "warning", "critical"] },
+                  "message_key": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

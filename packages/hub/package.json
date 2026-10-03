@@ -1,0 +1,13 @@
+{
+  "name": "@oosr/hub",
+  "version": "0.1.0",
+  "description": "OOSR reference hub: local-first registry, skills, signed event log, policy and leases",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": { "oosr-hub": "dist/bin.js" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@oosr/core": "0.1.0" }
+}

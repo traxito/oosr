@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OOSR Skill Registry</title>
+    <style>
+      :root { --bg: #f6f5f1; --surface: #fff; --text: #1d211e; --muted: #646b66; --border: #dedbd2; --accent: #2f6b4f; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #121513; --surface: #1a1e1b; --text: #e8ebe8; --muted: #9aa39d; --border: #2d332f; --accent: #7cc59f; }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      main { max-width: 820px; margin: 0 auto; padding: 48px 16px; }
+      h1 { font-size: 2rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+      a { color: var(--accent); }
+      code { font: 0.85em ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+      .muted { color: var(--muted); }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); margin-top: 24px; }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: grid; gap: 6px; }
+      .links { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>OOSR Skill Registry</h1>
+      <p class="muted">
+        Community skills for the Open Object &amp; Skill Registry, signed by
+        <code>did:web:traxito.github.io:oosr</code>. A hub that trusts this publisher installs them by reference.
+      </p>
+      <div class="links">
+        <a href="https://github.com/traxito/oosr">Repository &amp; spec</a>
+        <a href="did.json">DID document</a>
+        <a href="skills/index.json">index.json</a>
+        <a href="schema/v0/skill-manifest.json">Schemas</a>
+      </div>
+      <div id="skills" class="grid"></div>
+    </main>
+    <script>
+      fetch('skills/index.json')
+        .then((r) => r.json())
+        .then((index) => {
+          const root = document.getElementById('skills');
+          for (const s of index.skills) {
+            const card = document.createElement('a');
+            card.className = 'card';
+            card.href = `skills/${s.id.split('/').pop()}/${s.latest}/manifest.json`;
+            const title = document.createElement('strong');
+            title.textContent = s.title || s.id;
+            const id = document.createElement('code');
+            id.textContent = `${s.id}@${s.latest}`;
+            const applies = document.createElement('span');
+            applies.className = 'muted';
+            applies.textContent = s.applies_to.join(', ');
+            card.append(title, id, applies);
+            root.append(card);
+          }
+        });
+    </script>
+  </body>
+</html>

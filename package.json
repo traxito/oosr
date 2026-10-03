@@ -1,0 +1,31 @@
+{
+  "name": "oosr",
+  "private": true,
+  "description": "Open Object & Skill Registry: reference implementation, schemas and skills",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/hub",
+    "packages/cli",
+    "packages/sim",
+    "packages/conformance"
+  ],
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "build": "tsc -b packages/core packages/hub packages/cli packages/sim",
+    "test": "vitest run",
+    "lint:skills": "node packages/cli/dist/bin.js skill validate skills",
+    "hub": "node packages/hub/dist/bin.js",
+    "sim": "node packages/sim/dist/bin.js",
+    "oosr": "node packages/cli/dist/bin.js",
+    "demo": "node scripts/demo.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

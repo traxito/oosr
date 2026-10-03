@@ -1,0 +1,9 @@
+The OOSR specification text (spec/) and JSON Schemas (schemas/) are licensed under the
+Creative Commons Attribution 4.0 International License (CC BY 4.0).
+
+You are free to share and adapt them for any purpose, even commercially, provided you give
+appropriate credit, link to the license and indicate if changes were made.
+
+Full legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+
+Code in packages/, apps/ and scripts/ is licensed under the Apache License 2.0 (see LICENSE).

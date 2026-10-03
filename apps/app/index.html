@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#2f6b4f" />
+    <title>OOSR Home</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="#/"><span class="logo-sm" aria-hidden="true">◎</span> <span data-i18n="app_name">OOSR</span></a>
+      <span id="live" class="live off" aria-live="polite"></span>
+    </header>
+    <nav>
+      <a href="#/" data-i18n="nav_home">Home</a>
+      <a href="#/robots" data-i18n="nav_robots">Robots</a>
+      <a href="#/skills" data-i18n="nav_skills">Skills</a>
+      <a href="#/settings" data-i18n="nav_settings">Settings</a>
+    </nav>
+    <main id="main"></main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

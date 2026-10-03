@@ -1,0 +1,10 @@
+{
+  "name": "@oosr/cli",
+  "version": "0.1.0",
+  "description": "OOSR publisher CLI: keys, did:web documents, skill lint/sign/verify and static registries",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": { "oosr": "dist/bin.js" },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@oosr/core": "0.1.0" }
+}

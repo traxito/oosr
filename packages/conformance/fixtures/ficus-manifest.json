@@ -1,0 +1,39 @@
+{
+  "oosr": "0.1",
+  "id": "skill:vivero-x.es/ficus-lyrata-care",
+  "version": "1.2.0",
+  "title": "Ficus lyrata care",
+  "applies_to": ["plant/ficus-lyrata"],
+  "publisher": "did:web:vivero-x.es",
+  "knowledge": "knowledge.md",
+  "tasks": [
+    {
+      "name": "water",
+      "trigger": {
+        "any": [
+          { "since_event": "oosr.task.water.completed", "gt_days": 7 },
+          { "measure": "soil_moisture", "lt": 0.20 }
+        ]
+      },
+      "preconditions": [{ "measure": "soil_moisture", "lt": 0.30 }],
+      "steps": [
+        { "p": "navigate_to", "object": "$self", "standoff_m": 0.4 },
+        { "p": "measure", "sensor": "soil_moisture", "target": "$self" },
+        { "p": "dispense", "liquid": "water", "volume_ml": { "per_pot_litre": 80 }, "target": "$self" },
+        { "p": "measure", "sensor": "soil_moisture", "target": "$self", "after_s": 300 }
+      ],
+      "constraints": { "max_volume_ml": 600 },
+      "requires": ["navigate_to", "measure:soil_moisture", "dispense:water"]
+    },
+    {
+      "name": "prune",
+      "season": ["03", "04"],
+      "requires": ["inspect", "cut"],
+      "constraints": { "max_foliage_removed": 0.33 },
+      "requires_human_approval": true
+    }
+  ],
+  "messages": {
+    "leaf_spots": { "es": "Manchas en hojas, posible hongo", "en": "Leaf spots, possible fungus" }
+  }
+}

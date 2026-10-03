@@ -1,0 +1,115 @@
+{
+  "oosr": "0.1",
+  "id": "skill:traxito.github.io/oosr/plant-generic-care",
+  "version": "1.0.0",
+  "title": "Generic houseplant care (conservative default)",
+  "applies_to": [
+    "plant"
+  ],
+  "publisher": "did:web:traxito.github.io:oosr",
+  "knowledge": "knowledge.md",
+  "tasks": [
+    {
+      "name": "water",
+      "title_key": "task_water",
+      "trigger": {
+        "measure": "soil_moisture",
+        "lt": 0.15
+      },
+      "preconditions": [
+        {
+          "measure": "soil_moisture",
+          "lt": 0.2
+        }
+      ],
+      "steps": [
+        {
+          "p": "navigate_to",
+          "object": "$self",
+          "standoff_m": 0.4
+        },
+        {
+          "p": "measure",
+          "sensor": "soil_moisture",
+          "target": "$self"
+        },
+        {
+          "p": "dispense",
+          "liquid": "water",
+          "volume_ml": {
+            "per_pot_litre": 50
+          },
+          "target": "$self"
+        },
+        {
+          "p": "measure",
+          "sensor": "soil_moisture",
+          "target": "$self",
+          "after_s": 300
+        }
+      ],
+      "constraints": {
+        "max_volume_ml": 300
+      },
+      "requires": [
+        "navigate_to",
+        "measure:soil_moisture",
+        "dispense:water"
+      ]
+    },
+    {
+      "name": "inspect_health",
+      "title_key": "task_inspect_health",
+      "trigger": {
+        "since_event": "oosr.task.inspect_health.completed",
+        "gt_days": 7
+      },
+      "steps": [
+        {
+          "p": "navigate_to",
+          "object": "$self",
+          "standoff_m": 0.6
+        },
+        {
+          "p": "inspect",
+          "object": "$self",
+          "aspects": [
+            "leaves",
+            "stem",
+            "soil"
+          ]
+        }
+      ],
+      "requires": [
+        "navigate_to",
+        "inspect"
+      ]
+    }
+  ],
+  "messages": {
+    "task_water": {
+      "es": "Regar",
+      "en": "Water"
+    },
+    "task_inspect_health": {
+      "es": "Revisar salud",
+      "en": "Health check"
+    },
+    "leaf_spots": {
+      "es": "Manchas en hojas, posible hongo",
+      "en": "Leaf spots, possible fungus"
+    },
+    "yellow_leaves": {
+      "es": "Hojas amarillas: revisa el riego",
+      "en": "Yellowing leaves: check watering"
+    },
+    "pests_suspected": {
+      "es": "Posibles plagas en hojas o tallo",
+      "en": "Possible pests on leaves or stem"
+    },
+    "soil_waterlogged": {
+      "es": "Sustrato encharcado: no regar y revisar drenaje",
+      "en": "Waterlogged soil: hold watering and check drainage"
+    }
+  }
+}

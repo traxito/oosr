@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.oosr/
+data/
+site/
+*.private.jwk.json
+coverage/

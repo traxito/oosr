@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oosr.dev/schema/v0/skill-manifest.json",
+  "title": "OOSR Skill Manifest",
+  "description": "Knowledge + declarative tasks + constraints, signed by a publisher. Never executable code or free text aimed at the planner: steps may only use OOSR primitives.",
+  "type": "object",
+  "required": ["oosr", "id", "version", "applies_to", "publisher", "tasks"],
+  "properties": {
+    "oosr": { "const": "0.1" },
+    "id": { "type": "string", "pattern": "^skill:[a-z0-9.-]+(/[a-z0-9._-]+)*/[a-z0-9-]+$" },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "title": { "type": "string", "maxLength": 120, "description": "Human label for apps. Never passed to the planner as an instruction." },
+    "applies_to": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+(/[a-z0-9-]+)*$" }
+    },
+    "publisher": { "type": "string", "pattern": "^did:web:[a-z0-9.-]+(%3A[0-9]+)?(:[a-z0-9._-]+)*$" },
+    "knowledge": { "$ref": "#/$defs/relPath" },
+    "integrity": {
+      "type": "object",
+      "description": "SRI-style sha256 of every non-manifest file in the package. Covered by the signature.",
+      "propertyNames": { "$ref": "#/$defs/relPath" },
+      "additionalProperties": { "type": "string", "pattern": "^sha256-[A-Za-z0-9+/]{43}=$" }
+    },
+    "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } },
+    "messages": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_]{1,64}$" },
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "propertyNames": { "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+        "additionalProperties": { "type": "string", "maxLength": 280 }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "kid", "value"],
+      "properties": {
+        "alg": { "const": "ES256" },
+        "kid": { "type": "string", "pattern": "^did:web:.+#.+$" },
+        "value": { "$ref": "#/$defs/detachedJws" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "relPath": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]{1,200}$" },
+    "detachedJws": { "type": "string", "pattern": "^[A-Za-z0-9_-]+\\.\\.[A-Za-z0-9_-]+$" },
+    "sensor": { "enum": ["soil_moisture", "light_lux", "temperature"] },
+    "target": { "type": "string", "pattern": "^(\\$self|urn:oosr:obj:[a-z0-9-]+:[0-9a-f-]{36})$" },
+    "afterS": { "type": "number", "minimum": 0, "maximum": 86400 },
+    "task": {
+      "type": "object",
+      "required": ["name", "requires"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,40}$" },
+        "title_key": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" },
+        "trigger": { "$ref": "#/$defs/condition" },
+        "preconditions": { "type": "array", "items": { "$ref": "#/$defs/condition" } },
+        "season": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(0[1-9]|1[0-2])$" }
+        },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "max_volume_ml": { "type": "number", "exclusiveMinimum": 0 },
+            "max_foliage_removed": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": { "type": ["number", "boolean"] }
+        },
+        "requires": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z_]+(:[a-z_]+)?$" }
+        },
+        "requires_human_approval": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["any"],
+          "properties": { "any": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["all"],
+          "properties": { "all": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["since_event", "gt_days"],
+          "properties": {
+            "since_event": { "type": "string", "pattern": "^oosr\\.[a-z0-9_.]+$" },
+            "gt_days": { "type": "number", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["measure"],
+          "anyOf": [{ "required": ["lt"] }, { "required": ["gt"] }],
+          "properties": {
+            "measure": { "$ref": "#/$defs/sensor" },
+            "lt": { "type": "number" },
+            "gt": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": ["p"],
+      "properties": { "p": { "enum": ["navigate_to", "inspect", "measure", "grasp", "place", "dispense", "cut", "notify_human"] } },
+      "allOf": [
+        {
+          "if": { "properties": { "p": { "const": "navigate_to" } } },
+          "then": {
+            "required": ["object"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "object": { "$ref": "#/$defs/target" },
+              "standoff_m": { "type": "number", "minimum": 0, "maximum": 5 }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "inspect" } } },
+          "then": {
+            "required": ["object", "aspects"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "object": { "$ref": "#/$defs/target" },
+              "aspects": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["leaves", "soil", "stem"] } }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "measure" } } },
+          "then": {
+            "required": ["sensor", "target"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "sensor": { "$ref": "#/$defs/sensor" },
+              "target": { "$ref": "#/$defs/target" }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "grasp" } } },
+          "then": {
+            "required": ["object", "grip"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "object": { "$ref": "#/$defs/target" },
+              "grip": { "enum": ["pot_rim", "handle"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "place" } } },
+          "then": {
+            "required": ["object", "pose"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "object": { "$ref": "#/$defs/target" },
+              "pose": { "$ref": "https://oosr.dev/schema/v0/object.json#/$defs/pose" }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "dispense" } } },
+          "then": {
+            "required": ["liquid", "volume_ml", "target"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "liquid": { "enum": ["water"] },
+              "volume_ml": {
+                "oneOf": [
+                  { "type": "number", "exclusiveMinimum": 0 },
+                  {
+                    "type": "object",
+                    "required": ["per_pot_litre"],
+                    "properties": { "per_pot_litre": { "type": "number", "exclusiveMinimum": 0 } },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "target": { "$ref": "#/$defs/target" }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "cut" } } },
+          "then": {
+            "required": ["target"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "target": { "enum": ["stem_above_node"] },
+              "angle_deg": { "type": "number", "minimum": 0, "maximum": 90 }
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "if": { "properties": { "p": { "const": "notify_human" } } },
+          "then": {
+            "required": ["severity", "message_key"],
+            "properties": {
+              "p": true, "after_s": { "$ref": "#/$defs/afterS" },
+              "severity": { "enum": ["info", "warning", "critical"] },
+              "message_key": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  }
+}

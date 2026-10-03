@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oosr.dev/schema/v0/capability.json",
+  "title": "OOSR Capability Manifest",
+  "description": "Published by each robot. A primitive may carry a qualifier (measure:soil_moisture). A bare qualified primitive (measure) does NOT satisfy a qualified requirement (measure:soil_moisture).",
+  "type": "object",
+  "required": ["oosr", "robot", "model", "primitives"],
+  "properties": {
+    "oosr": { "const": "0.1" },
+    "robot": { "type": "string", "pattern": "^urn:oosr:robot:[a-z0-9-]+:[A-Za-z0-9._-]+$" },
+    "model": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9._-]+$" },
+    "primitives": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z_]+(:[a-z_]+)?$" }
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "payload_kg": { "type": "number", "minimum": 0 },
+        "reach_m": { "type": "number", "minimum": 0 },
+        "dispense_max_ml": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": { "type": "number" }
+    }
+  },
+  "additionalProperties": false
+}

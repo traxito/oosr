@@ -1,0 +1,8 @@
+{
+  "name": "@oosr/conformance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OOSR conformance suite (hub, robot, publisher roles)",
+  "license": "Apache-2.0",
+  "type": "module"
+}

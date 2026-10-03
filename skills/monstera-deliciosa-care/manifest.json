@@ -1,0 +1,165 @@
+{
+  "oosr": "0.1",
+  "id": "skill:traxito.github.io/oosr/monstera-deliciosa-care",
+  "version": "1.0.0",
+  "title": "Monstera deliciosa care",
+  "applies_to": [
+    "plant/monstera-deliciosa"
+  ],
+  "publisher": "did:web:traxito.github.io:oosr",
+  "knowledge": "knowledge.md",
+  "tasks": [
+    {
+      "name": "water",
+      "title_key": "task_water",
+      "trigger": {
+        "any": [
+          {
+            "since_event": "oosr.task.water.completed",
+            "gt_days": 8
+          },
+          {
+            "measure": "soil_moisture",
+            "lt": 0.2
+          }
+        ]
+      },
+      "preconditions": [
+        {
+          "measure": "soil_moisture",
+          "lt": 0.3
+        }
+      ],
+      "steps": [
+        {
+          "p": "navigate_to",
+          "object": "$self",
+          "standoff_m": 0.4
+        },
+        {
+          "p": "measure",
+          "sensor": "soil_moisture",
+          "target": "$self"
+        },
+        {
+          "p": "dispense",
+          "liquid": "water",
+          "volume_ml": {
+            "per_pot_litre": 90
+          },
+          "target": "$self"
+        },
+        {
+          "p": "measure",
+          "sensor": "soil_moisture",
+          "target": "$self",
+          "after_s": 300
+        }
+      ],
+      "constraints": {
+        "max_volume_ml": 1000
+      },
+      "requires": [
+        "navigate_to",
+        "measure:soil_moisture",
+        "dispense:water"
+      ]
+    },
+    {
+      "name": "inspect_health",
+      "title_key": "task_inspect_health",
+      "trigger": {
+        "since_event": "oosr.task.inspect_health.completed",
+        "gt_days": 7
+      },
+      "steps": [
+        {
+          "p": "navigate_to",
+          "object": "$self",
+          "standoff_m": 0.6
+        },
+        {
+          "p": "inspect",
+          "object": "$self",
+          "aspects": [
+            "leaves",
+            "stem",
+            "soil"
+          ]
+        }
+      ],
+      "requires": [
+        "navigate_to",
+        "inspect"
+      ]
+    },
+    {
+      "name": "prune",
+      "title_key": "task_prune",
+      "season": [
+        "03",
+        "04",
+        "05"
+      ],
+      "steps": [
+        {
+          "p": "navigate_to",
+          "object": "$self",
+          "standoff_m": 0.3
+        },
+        {
+          "p": "inspect",
+          "object": "$self",
+          "aspects": [
+            "leaves",
+            "stem"
+          ]
+        },
+        {
+          "p": "cut",
+          "target": "stem_above_node",
+          "angle_deg": 45
+        }
+      ],
+      "constraints": {
+        "max_foliage_removed": 0.25
+      },
+      "requires": [
+        "navigate_to",
+        "inspect",
+        "cut"
+      ],
+      "requires_human_approval": true
+    }
+  ],
+  "messages": {
+    "task_water": {
+      "es": "Regar",
+      "en": "Water"
+    },
+    "task_inspect_health": {
+      "es": "Revisar salud",
+      "en": "Health check"
+    },
+    "leaf_spots": {
+      "es": "Manchas en hojas, posible hongo",
+      "en": "Leaf spots, possible fungus"
+    },
+    "yellow_leaves": {
+      "es": "Hojas amarillas: revisa el riego",
+      "en": "Yellowing leaves: check watering"
+    },
+    "pests_suspected": {
+      "es": "Posibles plagas en hojas o tallo",
+      "en": "Possible pests on leaves or stem"
+    },
+    "soil_waterlogged": {
+      "es": "Sustrato encharcado: no regar y revisar drenaje",
+      "en": "Waterlogged soil: hold watering and check drainage"
+    },
+    "task_prune": {
+      "es": "Podar",
+      "en": "Prune"
+    }
+  }
+}
