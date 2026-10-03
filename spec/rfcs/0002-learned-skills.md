@@ -1,38 +1,39 @@
-# RFC-0002: Skills aprendidas por robots
+# RFC-0002: Skills learned by robots
 
 | | |
 |---|---|
-| **Fecha** | 3 oct 2026 |
-| **Autor** | Alex Montesinos |
-| **Estado** | Borrador (abierto a comentarios 14 días) |
-| **Depende de** | RFC-0001 |
+| **Author** | Alex Montesinos |
+| **Status** | Draft (open for comments for 14 days, [#6](https://github.com/traxito/oosr/issues/6)) |
+| **Created** | 2026-10-03 |
+| **Depends on** | RFC-0001 (Draft 0.2) |
 
-## 1. Motivación
+## 1. Motivation
 
-El RFC-0001 deja abierta esta pregunta: ¿puede un robot publicar skills aprendidas por experiencia?
-La respuesta es **sí**, con límites. Un robot que riega el mismo ficus durante meses aprende cosas
-que el vivero no puede saber: que esa maceta junto al radiador se seca en 4 días y no en 7, o que
-con 60 ml/l basta. Si ese conocimiento se queda dentro del robot, se pierde al cambiar de robot y
-los demás robots de la casa no lo aprovechan.
+RFC-0001 left this question open: may a robot publish skills learned from experience? The answer
+is **yes**, within limits. A robot that waters the same ficus for months learns things the nursery
+cannot know: that this particular pot next to the radiator dries out in 4 days rather than 7, or
+that 60 ml/l is enough. If that knowledge stays inside the robot, it is lost when the robot is
+replaced, and the other robots in the home cannot use it.
 
-El riesgo es obvio: un robot comprometido o mal calibrado que "aprende" a regar cada hora. Este RFC
-define cómo aprovechar lo aprendido sin que nada aprendido pueda elevar permisos.
+The risk is obvious: a compromised or miscalibrated robot that "learns" to water every hour. This
+RFC defines how to benefit from what robots learn without anything learned being able to escalate
+permissions.
 
-## 2. Principios
+## 2. Principles
 
-1. **Lo aprendido nunca amplía lo permitido.** Una skill aprendida solo puede moverse dentro de
-   los límites que ya autorizó un publisher de confianza y la política del hogar.
-2. **Local por defecto.** Lo aprendido vive en el hub del hogar. Salir de casa requiere un acto
-   explícito del propietario y la firma de un publisher.
-3. **Con evidencia.** Cada ajuste referencia los eventos firmados que lo justifican.
-4. **Reversible.** El propietario ve, desactiva y borra cualquier cosa aprendida desde la app.
+1. **What is learned never widens what is allowed.** A learned skill can only move within limits
+   already authorized by a trusted publisher and by the household policy.
+2. **Local by default.** What is learned lives in the home hub. Leaving the home requires an
+   explicit act by the owner and a publisher's signature.
+3. **Evidence-based.** Every adjustment references the signed events that justify it.
+4. **Reversible.** The owner sees, disables and deletes anything learned from the app.
 
-## 3. Dos niveles
+## 3. Two levels
 
-### Nivel 1: overlay de parámetros
+### Level 1: parameter overlays
 
-Ajusta parámetros de una tarea de una skill firmada, **dentro de rangos que el publisher declara
-como ajustables**. El manifiesto base añade `tunable`:
+An overlay adjusts parameters of a task in a signed skill, **within ranges the publisher declares
+as tunable**. The base manifest adds `tunable`:
 
 ```json
 {
@@ -46,10 +47,10 @@ como ajustables**. El manifiesto base añade `tunable`:
 }
 ```
 
-Las claves son JSON Pointers relativos a la tarea. Lo que no está en `tunable` no se puede tocar.
-`constraints` nunca es ajustable.
+Keys are JSON Pointers relative to the task. Anything not listed in `tunable` cannot be changed.
+`constraints` are never tunable.
 
-El overlay lo firma el robot:
+The robot signs the overlay:
 
 ```json
 {
@@ -69,42 +70,43 @@ El overlay lo firma el robot:
 }
 ```
 
-El hub lo acepta si: la base está instalada y es de confianza; todas las rutas están en `tunable`
-y los valores dentro de rango; los eventos de `evidence` existen, tratan sobre ese objeto y los
-firmó ese robot; y la política lo permite. Un overlay aplica a **un objeto** y nunca a un tipo.
-Al subir la major de la base, los overlays caducan.
+The hub accepts it if: the base skill is installed and trusted; every path is in `tunable` and every
+value is within range; the `evidence` events exist, concern that object and were signed by that
+robot; and the policy allows overlays. An overlay applies to **one object**, never to a type. When
+the base skill's major version changes, its overlays expire.
 
-### Nivel 2: skill aprendida
+### Level 2: learned skills
 
-Tareas nuevas compuestas solo con primitivas del vocabulario, para objetos sin skill o para
-necesidades que la skill no cubre. Restricciones:
+New tasks composed only of primitives from the vocabulary, for objects without a skill or for needs
+the skill does not cover. Restrictions:
 
-- `publisher` es el URN del robot y `provenance.kind = "learned"`.
-- Ámbito: solo el hub donde se aprendió. Otro hub la rechaza aunque confíe en el fabricante del robot.
-- **Toda tarea con efecto físico exige aprobación humana**, digan lo que digan el manifiesto o la
-  política, hasta que el propietario la "gradúe" tras N ejecuciones supervisadas sin fallo (N lo fija
-  la política; por defecto 5).
-- `dispense` y `cut` necesitan `constraints` explícitas, y nunca por encima de las de cualquier
-  skill de confianza instalada para ese tipo de objeto, si la hay.
+- `publisher` is the robot's URN and `provenance.kind` is `"learned"`.
+- Scope: only the hub where it was learned. Another hub rejects it, even if it trusts the robot's
+  manufacturer.
+- **Every task with a physical effect requires human approval**, whatever the manifest or the
+  policy say, until the owner "graduates" it after N supervised runs without failure (N is set by
+  the policy; default 5).
+- `dispense` and `cut` need explicit `constraints`, never above those of any trusted skill installed
+  for the same object type, if there is one.
 
-**Promoción.** Para salir del hogar, una skill aprendida tiene que firmarla de nuevo un publisher
-de confianza (fabricante, vivero o comunidad) tras revisarla. Así entra al ecosistema, con su
-`provenance` intacto como atribución.
+**Promotion.** To leave the home, a learned skill must be re-signed by a trusted publisher
+(manufacturer, nursery or community) after review. That is how it enters the ecosystem, with its
+`provenance` kept intact as attribution.
 
-## 4. Niveles de confianza
+## 4. Trust levels
 
-| Origen | Firmado por | Ámbito | Efecto físico |
+| Origin | Signed by | Scope | Physical effect |
 |---|---|---|---|
-| Skill de publisher | `did:web` de confianza | cualquier hub que confíe | según política |
-| Overlay (N1) | robot emparejado | un objeto, un hub | dentro de `tunable` y `constraints` de la base |
-| Skill aprendida (N2) | robot emparejado | un hub | siempre con aprobación hasta graduarse |
-| Aprendida y promovida | `did:web` de confianza | como una skill de publisher | según política |
+| Publisher skill | trusted `did:web` | any hub that trusts the publisher | per policy |
+| Overlay (L1) | paired robot | one object, one hub | within the base skill's `tunable` ranges and `constraints` |
+| Learned skill (L2) | paired robot | one hub | always with approval until graduated |
+| Learned and promoted | trusted `did:web` | like a publisher skill | per policy |
 
-## 5. Cambios propuestos
+## 5. Proposed changes
 
-- Manifiesto: campo opcional `tunable` por tarea; `provenance` opcional.
-- Nuevo documento `overlay` (schema `schemas/v0/overlay.json`, en un PR aparte).
-- Política del hogar:
+- Manifest: optional per-task `tunable`; optional `provenance`.
+- New `overlay` document (schema `schemas/v0/overlay.json`, in a separate PR).
+- Household policy:
 
 ```json
 {
@@ -117,27 +119,28 @@ de confianza (fabricante, vivero o comunidad) tras revisarla. Así entra al ecos
 }
 ```
 
-  `overlays`: `off | allow`. `skills`: `off | approval`. `share`: si se permite exportar lo
-  aprendido para revisión (siempre con consentimiento explícito por elemento).
-- Eventos: `oosr.learned.proposed` (robot), `oosr.learned.accepted` / `oosr.learned.revoked` (hub).
+  `overlays`: `off | allow`. `skills`: `off | approval`. `share`: whether learned items may be
+  exported for review (always with explicit consent per item).
+- Events: `oosr.learned.proposed` (robot), `oosr.learned.accepted` and `oosr.learned.revoked` (hub).
 - API: `POST /v0/learned`, `GET /v0/objects/{urn}/learned`, `DELETE /v0/learned/{id}`.
-- App: una sección "Lo que han aprendido los robots", con diff legible ("regar cada 4 días en lugar
-  de 7, porque se seca antes: ver 3 riegos").
+- App: a "What the robots have learned" section with a readable diff ("water every 4 days instead
+  of 7, because it dries out sooner: see 3 waterings").
+- Robot-role audit: overlays and learned skills are checked against their evidence and ranges.
 
-## 6. Amenazas
+## 6. Threats
 
-| Amenaza | Mitigación |
+| Threat | Mitigation |
 |---|---|
-| Robot comprometido aprende "regar siempre" | Rangos `tunable`, `constraints` no ajustables, scopes de escritura, revocación |
-| Deriva por sensor mal calibrado | Evidencia obligatoria; el hub puede pedir que la confirme un segundo robot o sensor; los overlays caducan |
-| Fuga de datos del hogar al compartir | `share: false` por defecto; la promoción la hace un publisher con consentimiento por elemento |
-| Skill aprendida como vector de phishing | Igual que en RFC-0001: solo `message_key`; las skills aprendidas no pueden definir mensajes nuevos, solo reutilizar los de skills de confianza |
+| A compromised robot learns "always water" | `tunable` ranges, non-tunable `constraints`, write scopes, revocation, audit |
+| Drift from a miscalibrated sensor | Mandatory evidence; the hub may require confirmation by a second robot or sensor; overlays expire |
+| Household data leaking when sharing | `share: false` by default; promotion goes through a publisher with per-item consent |
+| A learned skill as a phishing vector | As in RFC-0001: `message_key` only; learned skills cannot define new messages, only reuse those of trusted skills |
 
-## 7. Preguntas abiertas
+## 7. Open questions
 
-- [ ] ¿Debe el hub recalcular o verificar el ajuste a partir de la evidencia (p. ej. con un método
-      de ajuste estándar) o basta con comprobar que la evidencia existe?
-- [ ] ¿Cómo se resuelven overlays contradictorios de dos robots para el mismo objeto? (Propuesta:
-      gana el más reciente con más evidencia; la app muestra el conflicto.)
-- [ ] ¿Merece la pena un formato de "evidencia agregada" anónima para que los publishers mejoren sus
-      skills con datos de muchos hogares, y con qué garantías de privacidad?
+- [ ] Should the hub recompute or check the adjustment from the evidence (e.g. with a standard
+      fitting method), or is it enough to check that the evidence exists?
+- [ ] How are contradictory overlays from two robots for the same object resolved? (Proposal: the
+      most recent one with the most evidence wins; the app shows the conflict.)
+- [ ] Is an anonymous "aggregated evidence" format worth it, so publishers can improve their skills
+      with data from many homes, and with what privacy guarantees?
