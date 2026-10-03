@@ -33,7 +33,7 @@ export interface TaskView {
   trigger: boolean | null;
   preconditions: boolean | null;
   sensors: string[];
-  lease: { robot: string; expires_at: string } | null;
+  lease: { robot: string; task: string; expires_at: string } | null;
 }
 
 export interface Approval {
@@ -82,13 +82,16 @@ export class RobotClient {
     return `${this.robot}#att`;
   }
 
-  /** OAuth 2.0 Device Authorization Grant (RFC 8628). */
-  async pair(onCode: (userCode: string, verificationUri: string) => void, opts: { timeoutMs?: number } = {}): Promise<string> {
+  /** OAuth 2.0 Device Authorization Grant (RFC 8628). `deviceCert` is the manufacturer's certificate for this key. */
+  async pair(
+    onCode: (userCode: string, verificationUri: string) => void,
+    opts: { timeoutMs?: number; deviceCert?: string } = {},
+  ): Promise<string> {
     const publicJwk = toPublicJwk(this.key);
     const start = await this.request<{ device_code: string; user_code: string; verification_uri_complete: string; interval: number }>(
       'POST',
       '/v0/pair/device',
-      { capability: this.capability, public_jwk: publicJwk },
+      { capability: this.capability, public_jwk: publicJwk, ...(opts.deviceCert ? { device_cert: opts.deviceCert } : {}) },
       false,
     );
     onCode(start.user_code, start.verification_uri_complete);

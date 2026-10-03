@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { auditRobot } from './audit.js';
 import { Hub } from './hub.js';
 import { createHubServer } from './http.js';
 
@@ -8,6 +9,7 @@ const USAGE = `oosr-hub — OOSR reference hub
 Usage:
   oosr-hub init  [--data ./data] [--scope hub-7f3a] [--trust did:web:example.com ...] [--timezone Europe/Madrid]
   oosr-hub start [--data ./data] [--port 7400] [--host 127.0.0.1]
+  oosr-hub audit [--data ./data] --robot urn:oosr:robot:acme:sn-88412 [--json]   (robot-role conformance)
 `;
 
 const { positionals, values } = parseArgs({
@@ -19,6 +21,8 @@ const { positionals, values } = parseArgs({
     timezone: { type: 'string' },
     port: { type: 'string', default: '7400' },
     host: { type: 'string', default: '127.0.0.1' },
+    robot: { type: 'string' },
+    json: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -54,6 +58,19 @@ async function main(): Promise<void> {
     const stop = () => server.close(() => process.exit(0));
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
+    return;
+  }
+  if (cmd === 'audit') {
+    if (!values.robot) throw new Error('--robot is required');
+    const report = await auditRobot(Hub.open(values.data!), values.robot);
+    if (values.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    else {
+      const icon = { pass: '✓', warn: '!', fail: '✗' } as const;
+      process.stdout.write(`${report.robot}: ${report.events} events, ${report.rejections} refused writes\n`);
+      for (const c of report.checks) process.stdout.write(`  ${icon[c.status]} ${c.id.padEnd(24)} ${c.detail}\n`);
+      process.stdout.write(report.ok ? 'CONFORMANT\n' : 'NOT CONFORMANT\n');
+    }
+    if (!report.ok) process.exitCode = 1;
     return;
   }
   process.stderr.write(`unknown command ${cmd}\n\n${USAGE}`);

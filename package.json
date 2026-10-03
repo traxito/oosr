@@ -21,7 +21,8 @@
     "hub": "node packages/hub/dist/bin.js",
     "sim": "node packages/sim/dist/bin.js",
     "oosr": "node packages/cli/dist/bin.js",
-    "demo": "node scripts/demo.mjs"
+    "demo": "node scripts/demo.mjs",
+    "conformance": "node scripts/conformance.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

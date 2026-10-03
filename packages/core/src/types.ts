@@ -118,4 +118,7 @@ export interface HomePolicy {
   quiet_hours?: { from: string; to: string };
   timezone?: string;
   hemisphere?: 'north' | 'south';
+  /** Robot URN vendor segment -> manufacturer did:web that issues its device certificates. */
+  trusted_manufacturers?: Record<string, string>;
+  require_device_cert?: boolean;
 }

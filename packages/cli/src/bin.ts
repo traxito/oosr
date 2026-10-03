@@ -8,6 +8,7 @@ import {
   compareSemver,
   findAssertionKey,
   generateKeyPair,
+  issueDeviceCert,
   lintSkill,
   resolveDidWeb,
   signSkill,
@@ -32,6 +33,10 @@ Skills
   oosr skill pack     <dir>                     (prints the package JSON the hub accepts at POST /v0/skills)
   oosr skill verify   <dir|package.json> [--jwk public.jwk.json]   (default: resolve did:web)
 
+Manufacturers
+  oosr device-cert issue --key manufacturer.private.jwk.json --robot urn:oosr:robot:acme:sn-1 --model acme/arm-2
+                         --robot-jwk robot.public.jwk.json [--key-storage tpm|secure_element|software] [--days 3650]
+
 Registry (static site, e.g. GitHub Pages)
   oosr registry build --skills skills --did did:web:example.com --base-url https://example.com
                       (--key file | --key-env OOSR_PUBLISHER_JWK) [--out site]
@@ -49,6 +54,11 @@ const { positionals, values } = parseArgs({
     jwk: { type: 'string' },
     skills: { type: 'string', default: 'skills' },
     'base-url': { type: 'string' },
+    robot: { type: 'string' },
+    model: { type: 'string' },
+    'robot-jwk': { type: 'string' },
+    'key-storage': { type: 'string' },
+    days: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -196,6 +206,28 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === 'skill') return cmdSkill(sub, rest);
+  if (cmd === 'device-cert' && sub === 'issue') {
+    if (!values.robot || !values.model || !values['robot-jwk']) throw new Error('--robot, --model and --robot-jwk are required');
+    const key = loadKey();
+    const storage = values['key-storage'];
+    if (storage && !['tpm', 'secure_element', 'software'].includes(storage)) throw new Error('--key-storage must be tpm, secure_element or software');
+    const iat = Math.floor(Date.now() / 1000);
+    const cert = await issueDeviceCert(
+      {
+        iss: key.kid!.split('#')[0]!,
+        sub: values.robot,
+        model: values.model,
+        cnf: { jwk: JSON.parse(readFileSync(values['robot-jwk'], 'utf8')) as PublicJwk },
+        ...(storage ? { key_storage: storage as 'tpm' | 'secure_element' | 'software' } : {}),
+        iat,
+        ...(values.days ? { exp: iat + Number(values.days) * 86_400 } : {}),
+      },
+      key,
+      key.kid!,
+    );
+    process.stdout.write(`${cert}\n`);
+    return;
+  }
   if (cmd === 'registry' && sub === 'build') return cmdRegistryBuild();
   throw new Error(`unknown command ${cmd} (${basename(process.argv[1] ?? 'oosr')} --help)`);
 }

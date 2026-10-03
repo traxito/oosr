@@ -16,10 +16,11 @@ export interface RegistryIndex {
 }
 
 /**
- * Resolves publisher keys: pinned keys first (offline, local-first), then did:web with a cache.
- * Also fetches skill packages from the registry a publisher announces in its DID document.
+ * Resolves did:web keys of publishers and manufacturers: pinned keys first (offline,
+ * local-first), then did:web with a cache. Also fetches skill packages from the registry a
+ * publisher announces in its DID document.
  */
-export class PublisherResolver {
+export class TrustResolver {
   private cache = new Map<string, { doc: DidDocument; at: number }>();
 
   constructor(

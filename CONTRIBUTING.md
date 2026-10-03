@@ -9,13 +9,14 @@ trust rules) goes through an RFC.
 
 1. Open an issue labelled `rfc` describing the problem. Discuss before writing.
 2. Copy the format of [`spec/rfcs/0001-oosr.md`](spec/rfcs/0001-oosr.md) into
-   `spec/rfcs/NNNN-short-title.md` and open a PR. Spanish or English are both fine.
+   `spec/rfcs/NNNN-short-title.md` and open a PR. RFCs, issues and all project text are in English.
 3. The PR stays open for comments for **14 days**.
 4. Maintainers record the decision (accept, reject, postpone) in the PR, with reasons.
 5. Accepted RFCs update `schemas/`, the reference implementation and the conformance suite in
    the same or a follow-up PR. **A spec change without a conformance test is not finished.**
 
-New primitives always enter as optional capabilities in the Capability Manifest.
+New primitives always enter as optional capabilities in the Capability Manifest. Implementers can
+check themselves with `npm run conformance -- --url <hub> --token <owner token>`.
 
 ## 2. Skills for the community registry
 

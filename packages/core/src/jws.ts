@@ -81,3 +81,30 @@ export async function sha256Sri(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
   return `sha256-${Buffer.from(digest).toString('base64')}`;
 }
+
+/** Compact (non-detached) JWS, used for device certificates where the payload travels with the signature. */
+export async function signCompact(payload: unknown, privateJwk: PrivateJwk, kid: string, typ?: string): Promise<string> {
+  const header = b64url(JSON.stringify({ alg: 'ES256', kid, ...(typ ? { typ } : {}) }));
+  const body = b64url(JSON.stringify(payload));
+  const key = await importKey(privateJwk, 'sign');
+  const sig = new Uint8Array(await crypto.subtle.sign(SIGN, key, new TextEncoder().encode(`${header}.${body}`)));
+  return `${header}.${body}.${b64url(sig)}`;
+}
+
+export function decodeCompact<T>(jws: string): { header: JwsHeader & { typ?: string }; payload: T } {
+  const parts = jws.split('.');
+  if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_-]+$/.test(p))) throw new Error('malformed compact JWS');
+  const header = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8')) as JwsHeader & { typ?: string };
+  if (header.alg !== 'ES256') throw new Error(`unsupported alg ${header.alg}`);
+  if (typeof header.kid !== 'string' || !header.kid) throw new Error('JWS header without kid');
+  return { header, payload: JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as T };
+}
+
+export async function verifyCompact<T>(jws: string, publicJwk: PublicJwk): Promise<{ header: JwsHeader & { typ?: string }; payload: T }> {
+  const decoded = decodeCompact<T>(jws);
+  const [h, p, s] = jws.split('.');
+  const key = await importKey(publicJwk, 'verify');
+  const ok = await crypto.subtle.verify(SIGN, key, fromB64url(s!), new TextEncoder().encode(`${h}.${p}`));
+  if (!ok) throw new Error('invalid signature');
+  return decoded;
+}

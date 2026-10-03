@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { join } from 'node:path';
 import type {
   CapabilityManifest,
+  DeviceAttestation,
   HomePolicy,
   OosrEvent,
   PrivateJwk,
@@ -25,7 +26,19 @@ export interface RobotRecord {
   token_sha256: string;
   paired_at: string;
   device_cert?: string;
+  device_attestation?: DeviceAttestation;
   revoked_at?: string;
+}
+
+/** A robot write the hub refused. Kept for audits: a conformant robot should rarely appear here. */
+export interface Rejection {
+  at: string;
+  robot: string;
+  code: string;
+  message: string;
+  event_id?: string;
+  type?: string;
+  subject?: string;
 }
 
 export interface PairingRequest {
@@ -34,6 +47,7 @@ export interface PairingRequest {
   capability: CapabilityManifest;
   public_jwk: PublicJwk;
   device_cert?: string;
+  device_attestation?: DeviceAttestation;
   created_at: string;
   expires_at: string;
   status: 'pending' | 'approved' | 'denied';
@@ -117,6 +131,19 @@ export class Store {
 
   appendEvent(ev: OosrEvent): void {
     appendFileSync(join(this.dir, 'events.jsonl'), `${JSON.stringify(ev)}\n`);
+  }
+
+  appendRejection(r: Rejection): void {
+    appendFileSync(join(this.dir, 'rejections.jsonl'), `${JSON.stringify(r)}\n`);
+  }
+
+  loadRejections(): Rejection[] {
+    const path = join(this.dir, 'rejections.jsonl');
+    if (!existsSync(path)) return [];
+    return readFileSync(path, 'utf8')
+      .split('\n')
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Rejection);
   }
 
   loadSkills(): SkillPackage[] {

@@ -21,6 +21,8 @@ import {
   verifyEvent,
   verifySkillPackage,
   didWebUrl,
+  issueDeviceCert,
+  verifyDeviceCert,
   type CapabilityManifest,
   type ObjectDescription,
   type SkillManifest,
@@ -34,8 +36,8 @@ const knowledge = readFileSync(fixture('ficus-knowledge.md'));
 const plant: ObjectDescription = {
   id: 'urn:oosr:obj:hub-7f3a:0192f5e1-8c2d-7b4e-9a1f-3c5d6e7f8a9b',
   type: 'plant/ficus-lyrata',
-  name: 'Ficus del salón',
-  location: { zone: 'salon' },
+  name: 'Living room ficus',
+  location: { zone: 'living-room' },
   skills: [{ ref: 'skill:vivero-x.es/ficus-lyrata-care', min_version: '1.0.0' }],
   attributes: { pot_volume_l: 3 },
 };
@@ -171,6 +173,28 @@ describe('conditions', () => {
     expect(inSeason(prune, new Date('2026-03-15T12:00:00Z'), { timeZone: 'UTC' })).toBe(true);
     expect(inSeason(prune, new Date('2026-09-15T12:00:00Z'), { timeZone: 'UTC' })).toBe(false);
     expect(inSeason(prune, new Date('2026-09-15T12:00:00Z'), { timeZone: 'UTC', hemisphere: 'south' })).toBe(true);
+  });
+});
+
+describe('device certificates', () => {
+  it('binds robot, model and key to a trusted manufacturer', async () => {
+    const maker = await generateKeyPair('did:web:acme.example#key-1');
+    const robotKey = await generateKeyPair();
+    const robot = 'urn:oosr:robot:acme:sn-88412';
+    const cert = await issueDeviceCert(
+      { iss: 'did:web:acme.example', sub: robot, model: 'acme/helper-arm-2', cnf: { jwk: robotKey.publicJwk }, key_storage: 'tpm' },
+      maker.privateJwk,
+      'did:web:acme.example#key-1',
+    );
+    const expectations = { robot, model: 'acme/helper-arm-2', publicJwk: robotKey.publicJwk, manufacturers: { acme: 'did:web:acme.example' } };
+    const resolve = async () => maker.publicJwk;
+    await expect(verifyDeviceCert(cert, resolve, expectations)).resolves.toMatchObject({ iss: 'did:web:acme.example', key_storage: 'tpm' });
+
+    const [h, , s] = cert.split('.');
+    const forgedBody = Buffer.from(JSON.stringify({ iss: 'did:web:acme.example', sub: robot, model: 'acme/helper-arm-2', cnf: { jwk: (await generateKeyPair()).publicJwk }, iat: 1 })).toString('base64url');
+    await expect(verifyDeviceCert(`${h}.${forgedBody}.${s}`, resolve, expectations)).rejects.toThrow(/signature/);
+    await expect(verifyDeviceCert(cert, resolve, { ...expectations, manufacturers: {} })).rejects.toThrow(/no trusted manufacturer/);
+    await expect(verifyDeviceCert(cert, resolve, { ...expectations, robot: 'urn:oosr:robot:acme:sn-1' })).rejects.toThrow(/not urn/);
   });
 });
 

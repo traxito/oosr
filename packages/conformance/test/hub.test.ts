@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateKeyPair, localMonth, signEvent, buildEvent, uuidv7, type SkillManifest } from '@oosr/core';
-import { Hub } from '@oosr/hub';
+import { buildEvent, generateKeyPair, localMonth, signEvent, uuidv7, type SkillManifest } from '@oosr/core';
+import { Hub, auditRobot } from '@oosr/hub';
 import { ClientError, SimRobot, type RobotClient } from '@oosr/sim';
-import { acmeCapability, ficusManifest, humanoidCapability, startEnv, vacuumCapability, type Env } from './harness.js';
+import { EXTERNAL, acmeCapability, ficusManifest, humanoidCapability, startEnv, vacuumCapability, type Env } from './harness.js';
 
 const FICUS_REF = 'skill:vivero-x.es/ficus-lyrata-care';
 const SKILL = `${FICUS_REF}@1.2.0`;
-const CONFIRM = { name: 'Ficus del salón', zone: 'salon', attributes: { pot_volume_l: 3 }, skills: [{ ref: FICUS_REF, min_version: '1.0.0' }] };
+const CONFIRM = { name: 'Living room ficus', zone: 'living-room', attributes: { pot_volume_l: 3 }, skills: [{ ref: FICUS_REF, min_version: '1.0.0' }] };
 
 async function expectError(p: Promise<unknown>, status: number, code: string): Promise<void> {
   const e = await p.then(
@@ -15,6 +15,11 @@ async function expectError(p: Promise<unknown>, status: number, code: string): P
   );
   expect(e, `expected ${status} ${code}`).toBeInstanceOf(ClientError);
   expect({ status: (e as ClientError).status, code: (e as ClientError).code }).toEqual({ status, code });
+}
+
+/** Installs a variant of the fixture skill under another id (same publisher namespace). */
+function variant(name: string, patch: Partial<SkillManifest>): SkillManifest {
+  return { ...ficusManifest(), id: `skill:vivero-x.es/${name}`, ...patch };
 }
 
 describe('RFC-0001 §8: a Ficus lyrata watered by a robot', () => {
@@ -26,56 +31,57 @@ describe('RFC-0001 §8: a Ficus lyrata watered by a robot', () => {
 
   it('runs enrolment, matching, watering, the second robot and the inspection alert', async () => {
     expect((await env.owner('POST', '/v0/skills', await env.sign(ficusManifest()))).status).toBe(201);
+    const tag = env.tag(37);
 
-    // Alta: the robot sees an unbound tag; nothing exists until the human confirms.
+    // Enrolment: the robot sees an unbound tag; nothing exists until the human confirms.
     const arm = await env.pairRobot(acmeCapability());
-    await expectError(arm.resolve('hub-7f3a', 37), 404, 'unbound_tag');
-    const proposal = await arm.proposeEnrolment({ tag_id: 37, tag_size_mm: 30, proposed_type: 'plant/ficus-lyrata', confidence: 0.82 });
-    await expectError(arm.resolve('hub-7f3a', 37), 404, 'unbound_tag');
+    await expectError(arm.resolve(env.scope, tag.id, tag.family), 404, 'unbound_tag');
+    const proposal = await arm.proposeEnrolment({ tag_family: tag.family, tag_id: tag.id, tag_size_mm: 30, proposed_type: 'plant/ficus-lyrata', confidence: 0.82 });
+    await expectError(arm.resolve(env.scope, tag.id, tag.family), 404, 'unbound_tag');
     const pending = await env.owner('GET', '/v0/enrolments?status=pending');
-    expect(pending.body.map((e: { id: string }) => e.id)).toEqual([proposal.id]);
-    const confirmed = await env.owner('POST', `/v0/enrolments/${proposal.id}/confirm`, CONFIRM);
-    expect(confirmed.status).toBe(200);
-    const { object: urn } = await arm.resolve('hub-7f3a', 37);
-    expect(urn).toMatch(/^urn:oosr:obj:hub-7f3a:[0-9a-f-]{36}$/);
+    expect(pending.body.map((e: { id: string }) => e.id)).toContain(proposal.id);
+    expect((await env.owner('POST', `/v0/enrolments/${proposal.id}/confirm`, CONFIRM)).status).toBe(200);
+    const { object: urn } = await arm.resolve(env.scope, tag.id, tag.family);
+    expect(urn).toMatch(/^urn:oosr:obj:[a-z0-9-]+:[0-9a-f-]{36}$/);
     const events = await env.owner('GET', `/v0/objects/${urn}/events`);
     expect(events.body.map((e: { type: string }) => e.type)).toEqual(['oosr.object.enrolled']);
 
     // Matching: water yes, prune no (no cut).
-    const tasks = await arm.tasks(urn);
-    const byName = Object.fromEntries(tasks.map((t) => [t.task, t]));
+    const byName = Object.fromEntries((await arm.tasks(urn)).map((t) => [t.task, t]));
     expect(byName.water).toMatchObject({ eligible: true, physical: true, trigger: true });
     expect(byName.prune).toMatchObject({ eligible: false, missing: ['cut'], needs_approval: true });
 
     // Watering cycle: 0.12 -> 240 ml (80 ml/l x 3 l) -> 0.38.
-    const world = { tags: { '37': { soil_moisture: 0.12 } } };
-    const reports = await new SimRobot(arm, world).cycle();
-    expect(reports.find((r) => r.task === 'water')).toMatchObject({ outcome: 'completed' });
+    const world = { tags: { [String(tag.id)]: { soil_moisture: 0.12 } } };
+    const robot = new SimRobot(arm, world);
+    const object = await arm.object(urn);
+    const water = (await arm.tasks(urn)).find((t) => t.task === 'water')!;
+    expect(await robot.consider(object, await arm.state(urn), water)).toMatchObject({ outcome: 'completed' });
     const state = await arm.state(urn);
     expect(state.last_watered).toBeTruthy();
     expect(state.tasks.water!.last_result).toEqual({ soil_moisture_before: 0.12, volume_ml: 240, soil_moisture_after: 0.38 });
     expect(state.measurements.soil_moisture!.value).toBe(0.38);
 
-    // Second robot from another vendor: reads the shared state, nothing to do.
+    // A second robot from another vendor reads the shared state: nothing to do.
     const humanoid = await env.pairRobot(humanoidCapability());
-    const hTasks = await humanoid.tasks(urn);
-    expect(hTasks.find((t) => t.task === 'water')).toMatchObject({ eligible: true, trigger: false });
-    const hReports = await new SimRobot(humanoid, world).cycle();
-    expect(hReports.find((r) => r.task === 'water')).toMatchObject({ outcome: 'skipped' });
+    const hWater = (await humanoid.tasks(urn)).find((t) => t.task === 'water')!;
+    expect(hWater).toMatchObject({ eligible: true, trigger: false });
+    expect(await new SimRobot(humanoid, world).consider(object, await humanoid.state(urn), hWater)).toMatchObject({ outcome: 'skipped' });
 
-    // Inspection with alert: localized message comes from the signed manifest, never the robot.
-    await humanoid.syncClock();
+    // Inspection alert: the localized message comes from the signed manifest, never the robot.
     await humanoid.emit('oosr.observation.recorded', urn, { notify: { severity: 'warning', message_key: 'leaf_spots' } }, SKILL);
     const alerts = (await env.owner('GET', `/v0/objects/${urn}/state`)).body.open_alerts;
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toMatchObject({ message_key: 'leaf_spots', messages: { es: 'Manchas en hojas, posible hongo' } });
+    expect(alerts[0]).toMatchObject({ message_key: 'leaf_spots', messages: { en: 'Leaf spots, possible fungus' } });
     expect((await env.owner('POST', `/v0/objects/${urn}/alerts/leaf_spots/ack`)).status).toBe(200);
     expect((await env.owner('GET', `/v0/objects/${urn}/state`)).body.open_alerts).toEqual([]);
 
-    // The log is the source of truth: a restarted hub derives the same projection.
-    const reopened = Hub.open(env.dir);
-    expect(reopened.getState(urn).last_watered).toBe(state.last_watered);
-    expect(reopened.resolve('hub-7f3a', 'tag36h11', 37).object).toBe(urn);
+    if (!EXTERNAL) {
+      // Reference hub: the log is the source of truth, a restart derives the same projection.
+      const reopened = Hub.open(env.dir!);
+      expect(reopened.getState(urn).last_watered).toBe(state.last_watered);
+      expect(reopened.resolve(env.scope, tag.family, tag.id).object).toBe(urn);
+    }
   });
 });
 
@@ -88,8 +94,7 @@ describe('§9 hub conformance', () => {
     env = await startEnv();
     await env.owner('POST', '/v0/skills', await env.sign(ficusManifest()));
     arm = await env.pairRobot(acmeCapability());
-    urn = await env.enrol(arm, 37, CONFIRM);
-    await arm.syncClock();
+    urn = await env.enrol(arm, env.tag(37), CONFIRM);
   });
   afterEach(() => env.close());
 
@@ -116,7 +121,6 @@ describe('§9 hub conformance', () => {
 
   it('rejects a second lease on the same object and task', async () => {
     const humanoid = await env.pairRobot(humanoidCapability());
-    await humanoid.syncClock();
     await arm.emit('oosr.task.water.started', urn, { lease_s: 600 }, SKILL);
     await expectError(humanoid.emit('oosr.task.water.started', urn, { lease_s: 600 }, SKILL), 409, 'lease_conflict');
     // Only the lease holder can complete; completing releases the lease.
@@ -125,16 +129,40 @@ describe('§9 hub conformance', () => {
     await humanoid.emit('oosr.task.water.started', urn, { lease_s: 60 }, SKILL);
   });
 
+  it('physical tasks share one lease per object; non-physical tasks run alongside', async () => {
+    const pot = variant('pot-care', {
+      applies_to: ['plant/pot-test'],
+      tasks: [
+        { name: 'water', requires: ['dispense:water'], steps: [{ p: 'dispense', liquid: 'water', volume_ml: 100, target: '$self' }] },
+        { name: 'move', requires: ['grasp', 'place'] },
+        { name: 'look', requires: ['inspect'] },
+      ],
+    });
+    await env.owner('POST', '/v0/skills', await env.sign(pot));
+    const humanoid = await env.pairRobot(humanoidCapability());
+    const p = await env.enrol(humanoid, env.tag(50), { type: 'plant/pot-test', zone: 'living-room', skills: [] }, 'plant/pot-test');
+    const ref = 'skill:vivero-x.es/pot-care@1.2.0';
+
+    await arm.emit('oosr.task.water.started', p, { lease_s: 600 }, ref);
+    await expectError(humanoid.emit('oosr.task.move.started', p, { lease_s: 600 }, ref), 409, 'lease_conflict');
+    // The same robot cannot interleave two physical runs on one object either.
+    await expectError(arm.emit('oosr.task.move.started', p, { lease_s: 600 }, ref), 409, 'lease_conflict');
+    await humanoid.emit('oosr.task.look.started', p, { lease_s: 60 }, ref);
+    await humanoid.emit('oosr.task.look.completed', p, {}, ref);
+    await arm.emit('oosr.task.water.completed', p, { volume_ml: 100 }, ref);
+    await humanoid.emit('oosr.task.move.started', p, { lease_s: 600 }, ref);
+    const view = (await arm.tasks(p)).find((t) => t.task === 'water')!;
+    expect(view.lease).toMatchObject({ robot: humanoid.robot, task: 'move' });
+  });
+
   it('rejects writes outside the robot scopes', async () => {
     const observer = await env.pairRobot(humanoidCapability(), { write: ['oosr.observation.*'] });
-    await observer.syncClock();
     await observer.emit('oosr.observation.recorded', urn, { measurements: { soil_moisture: 0.3 } });
     await expectError(observer.emit('oosr.task.water.started', urn, { lease_s: 60 }, SKILL), 403, 'scope_denied');
   });
 
   it('rejects writes outside the robot zones', async () => {
-    const kitchenOnly = await env.pairRobot(humanoidCapability(), { zones: ['cocina'] });
-    await kitchenOnly.syncClock();
+    const kitchenOnly = await env.pairRobot(humanoidCapability(), { zones: ['kitchen'] });
     await expectError(kitchenOnly.emit('oosr.observation.recorded', urn, { measurements: { soil_moisture: 0.3 } }), 403, 'zone_denied');
   });
 
@@ -144,21 +172,16 @@ describe('§9 hub conformance', () => {
 
   it('rejects a task the robot is not eligible for (outside its primitives)', async () => {
     const vacuum = await env.pairRobot(vacuumCapability());
-    await vacuum.syncClock();
     await expectError(vacuum.emit('oosr.task.water.started', urn, { lease_s: 60 }, SKILL), 403, 'not_eligible');
   });
 
   it('requires a granted approval for sensitive tasks and consumes it', async () => {
-    const bonsai: SkillManifest = {
-      ...ficusManifest(),
-      id: 'skill:vivero-x.es/bonsai-care',
+    await env.owner('POST', '/v0/skills', await env.sign(variant('bonsai-care', {
       applies_to: ['plant/bonsai'],
       tasks: [{ name: 'prune', requires: ['inspect', 'cut'], requires_human_approval: true }],
-    };
-    await env.owner('POST', '/v0/skills', await env.sign(bonsai));
+    })));
     const humanoid = await env.pairRobot(humanoidCapability());
-    const tree = await env.enrol(humanoid, 12, { type: 'plant/bonsai', zone: 'salon', skills: [] });
-    await humanoid.syncClock();
+    const tree = await env.enrol(humanoid, env.tag(12), { type: 'plant/bonsai', zone: 'living-room', skills: [] });
     const ref = 'skill:vivero-x.es/bonsai-care@1.2.0';
 
     await expectError(humanoid.emit('oosr.task.prune.started', tree, { lease_s: 300 }, ref), 403, 'approval_required');
@@ -175,49 +198,44 @@ describe('§9 hub conformance', () => {
   });
 
   it('policy always_require_approval applies even when the skill does not ask', async () => {
-    const hedge: SkillManifest = {
-      ...ficusManifest(),
-      id: 'skill:vivero-x.es/hedge-care',
-      applies_to: ['plant/hedge'],
-      tasks: [{ name: 'trim', requires: ['cut'] }],
-    };
-    await env.owner('POST', '/v0/skills', await env.sign(hedge));
+    await env.updatePolicy((p) => ({ ...p, always_require_approval: ['cut'] }));
+    await env.owner('POST', '/v0/skills', await env.sign(variant('hedge-care', { applies_to: ['plant/hedge'], tasks: [{ name: 'trim', requires: ['cut'] }] })));
     const humanoid = await env.pairRobot(humanoidCapability());
-    const h = await env.enrol(humanoid, 13, { type: 'plant/hedge', zone: 'salon', skills: [] });
-    await humanoid.syncClock();
+    const h = await env.enrol(humanoid, env.tag(13), { type: 'plant/hedge', zone: 'living-room', skills: [] });
     await expectError(humanoid.emit('oosr.task.trim.started', h, {}, 'skill:vivero-x.es/hedge-care@1.2.0'), 403, 'approval_required');
   });
 
   it('rejects tasks out of season', async () => {
-    const offMonth = String(((localMonth(new Date()) + 5) % 12) + 1).padStart(2, '0');
-    const seasonal: SkillManifest = {
-      ...ficusManifest(),
-      id: 'skill:vivero-x.es/rose-care',
+    const month = localMonth(new Date());
+    const offMonth = String((month % 12) + 1).padStart(2, '0');
+    // The major version is the month, so external hubs that keep earlier runs never mix variants.
+    const version = `${month}.0.0`;
+    await env.owner('POST', '/v0/skills', await env.sign(variant('rose-care', {
+      version,
       applies_to: ['plant/rose'],
       tasks: [{ name: 'feed', season: [offMonth], requires: ['navigate_to'] }],
-    };
-    await env.owner('POST', '/v0/skills', await env.sign(seasonal));
-    const rose = await env.enrol(arm, 14, { type: 'plant/rose', zone: 'salon', skills: [] });
-    await expectError(arm.emit('oosr.task.feed.started', rose, {}, 'skill:vivero-x.es/rose-care@1.2.0'), 403, 'out_of_season');
+    })));
+    const rose = await env.enrol(arm, env.tag(14), { type: 'plant/rose', zone: 'living-room', skills: [{ ref: 'skill:vivero-x.es/rose-care', min_version: version }] });
+    await expectError(arm.emit('oosr.task.feed.started', rose, {}, `skill:vivero-x.es/rose-care@${version}`), 403, 'out_of_season');
   });
 
   it('rejects physical tasks during quiet hours', async () => {
-    const policy = (await env.owner('GET', '/v0/policy')).body;
     const now = new Date();
     const hh = (d: Date) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
-    await env.owner('PUT', '/v0/policy', {
-      ...policy,
+    await env.updatePolicy((p) => ({
+      ...p,
       timezone: 'UTC',
       quiet_hours: { from: hh(new Date(now.getTime() - 3_600_000)), to: hh(new Date(now.getTime() + 3_600_000)) },
-    });
+    }));
     await expectError(arm.emit('oosr.task.water.started', urn, { lease_s: 60 }, SKILL), 403, 'quiet_hours');
     // Observations are not physical and still go through.
     await arm.emit('oosr.observation.recorded', urn, { measurements: { soil_moisture: 0.2 } });
   });
 
   it('a tag without binding executes nothing', async () => {
-    await expectError(arm.resolve('hub-7f3a', 99), 404, 'unbound_tag');
-    const ghost = 'urn:oosr:obj:hub-7f3a:0192f5e1-0000-7000-8000-000000000000';
+    const t = env.tag(99);
+    await expectError(arm.resolve(env.scope, t.id, t.family), 404, 'unbound_tag');
+    const ghost = `urn:oosr:obj:${env.scope}:0192f5e1-0000-7000-8000-000000000000`;
     await expectError(arm.emit('oosr.observation.recorded', ghost, {}), 404, 'unknown_object');
   });
 
@@ -255,6 +273,52 @@ describe('§9 hub conformance', () => {
   });
 });
 
+describe('§7 device certificates', () => {
+  let env: Env;
+  beforeEach(async () => {
+    env = await startEnv();
+  });
+  afterEach(() => env.close());
+
+  async function startPairing(cap: ReturnType<typeof acmeCapability>, key: Awaited<ReturnType<typeof generateKeyPair>>['privateJwk'], cert?: string) {
+    const res = await fetch(`${env.url}/v0/pair/device`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability: cap, public_jwk: { kty: 'EC', crv: 'P-256', x: key.x, y: key.y }, ...(cert ? { device_cert: cert } : {}) }),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  it('pairs a robot whose certificate binds its key, and records the attestation', async () => {
+    const cap = env.robot(acmeCapability());
+    const { privateJwk: key } = await generateKeyPair();
+    const robot = await env.pairRobot(acmeCapability(), { key, deviceCert: await env.deviceCert(cap, key) });
+    const listed = (await env.owner('GET', '/v0/robots')).body.find((r: { robot: string }) => r.robot === robot.robot);
+    expect(listed.device_attestation).toMatchObject({ iss: 'did:web:acme.example', key_storage: 'tpm' });
+  });
+
+  it('rejects a certificate for another key, model, issuer or one that expired', async () => {
+    const cap = env.robot(acmeCapability());
+    const { privateJwk: key } = await generateKeyPair();
+    const { privateJwk: other } = await generateKeyPair();
+    const cases = [
+      await env.deviceCert(cap, other),
+      await env.deviceCert(cap, key, { model: 'acme/other-model' }),
+      await env.deviceCert(cap, key, { exp: Math.floor(Date.now() / 1000) - 60 }),
+    ];
+    for (const cert of cases) expect(await startPairing(cap, key, cert)).toMatchObject({ status: 422, body: { error: 'invalid_device_cert' } });
+    // A certificate from acme does not vouch for robots of another vendor.
+    const humanoid = env.robot(humanoidCapability());
+    expect(await startPairing(humanoid, key, await env.deviceCert(humanoid, key))).toMatchObject({ status: 422, body: { error: 'invalid_device_cert' } });
+  });
+
+  it('refuses robots without a certificate when the policy requires one', async () => {
+    await env.updatePolicy((p) => ({ ...p, require_device_cert: true }));
+    const { privateJwk: key } = await generateKeyPair();
+    expect(await startPairing(env.robot(vacuumCapability()), key)).toMatchObject({ status: 403, body: { error: 'device_cert_required' } });
+  });
+});
+
 describe('§5 skill trust', () => {
   let env: Env;
   beforeEach(async () => {
@@ -263,8 +327,7 @@ describe('§5 skill trust', () => {
   afterEach(() => env.close());
 
   it('refuses skills from untrusted publishers', async () => {
-    const policy = (await env.owner('GET', '/v0/policy')).body;
-    await env.owner('PUT', '/v0/policy', { ...policy, trusted_publishers: [] });
+    await env.updatePolicy((p) => ({ ...p, trusted_publishers: p.trusted_publishers.filter((d) => d !== 'did:web:vivero-x.es') }));
     const r = await env.owner('POST', '/v0/skills', await env.sign(ficusManifest()));
     expect(r).toMatchObject({ status: 403, body: { error: 'untrusted_publisher' } });
   });
@@ -280,18 +343,52 @@ describe('§5 skill trust', () => {
   });
 
   it('refuses a skill signed by one publisher under another publisher namespace', async () => {
-    const m = { ...ficusManifest(), id: 'skill:oosr.dev/ficus-lyrata-care' };
-    await expect(env.sign(m)).rejects.toThrow(/namespace/);
+    await expect(env.sign({ ...ficusManifest(), id: 'skill:oosr.dev/ficus-lyrata-care' })).rejects.toThrow(/namespace/);
   });
 
   it('falls back to the most specific skill by type when the object declares none', async () => {
     await env.owner('POST', '/v0/skills', await env.sign(ficusManifest()));
-    const generic: SkillManifest = { ...ficusManifest(), id: 'skill:vivero-x.es/plant-care', applies_to: ['plant'] };
-    await env.owner('POST', '/v0/skills', await env.sign(generic));
+    await env.owner('POST', '/v0/skills', await env.sign(variant('plant-care', { applies_to: ['plant'] })));
     const arm = await env.pairRobot(acmeCapability());
-    const ficus = await env.enrol(arm, 40, { zone: 'salon', attributes: { pot_volume_l: 3 }, skills: [] });
-    const other = await env.enrol(arm, 41, { type: 'plant/olea-europaea', zone: 'salon', attributes: { pot_volume_l: 3 }, skills: [] });
-    expect(new Set((await arm.tasks(ficus)).map((t) => t.skill))).toEqual(new Set([`skill:vivero-x.es/ficus-lyrata-care@1.2.0`]));
-    expect(new Set((await arm.tasks(other)).map((t) => t.skill))).toEqual(new Set([`skill:vivero-x.es/plant-care@1.2.0`]));
+    const ficus = await env.enrol(arm, env.tag(40), { zone: 'living-room', attributes: { pot_volume_l: 3 }, skills: [] });
+    const olive = await env.enrol(arm, env.tag(41), { type: 'plant/olea-europaea', zone: 'living-room', attributes: { pot_volume_l: 3 }, skills: [] });
+    expect(new Set((await arm.tasks(ficus)).map((t) => t.skill))).toEqual(new Set([SKILL]));
+    expect(new Set((await arm.tasks(olive)).map((t) => t.skill))).toEqual(new Set(['skill:vivero-x.es/plant-care@1.2.0']));
+  });
+});
+
+describe.skipIf(EXTERNAL)('robot-role audit (reference hub)', () => {
+  let env: Env;
+  beforeEach(async () => {
+    env = await startEnv();
+    await env.owner('POST', '/v0/skills', await env.sign(ficusManifest()));
+  });
+  afterEach(() => env.close());
+
+  it('the reference simulated robot is conformant', async () => {
+    const arm = await env.pairRobot(acmeCapability());
+    const urn = await env.enrol(arm, env.tag(37), CONFIRM);
+    await new SimRobot(arm, { tags: { '37': { soil_moisture: 0.12 } } }).cycle();
+    const report = await auditRobot(env.hub!, arm.robot);
+    expect(report.checks.filter((c) => c.status === 'fail')).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect((await env.owner('GET', `/v0/robots/${encodeURIComponent(arm.robot)}/audit`)).body.ok).toBe(true);
+    expect(urn).toBeTruthy();
+  });
+
+  it('flags a robot that attempts tasks outside its primitives and exceeds constraints', async () => {
+    const enroller = await env.pairRobot(acmeCapability());
+    const urn = await env.enrol(enroller, env.tag(37), CONFIRM);
+    const sloppy = await env.pairRobot(vacuumCapability());
+    await sloppy.emit('oosr.task.water.started', urn, {}, SKILL).catch(() => {});
+    await enroller.emit('oosr.task.water.started', urn, { lease_s: 60 }, SKILL);
+    await enroller.emit('oosr.task.water.completed', urn, { volume_ml: 900 }, SKILL);
+
+    const vacuum = await auditRobot(env.hub!, sloppy.robot);
+    expect(vacuum.ok).toBe(false);
+    expect(vacuum.checks.find((c) => c.id === 'no_refused_writes')).toMatchObject({ status: 'fail' });
+    const arm = await auditRobot(env.hub!, enroller.robot);
+    expect(arm.checks.find((c) => c.id === 'constraints_respected')).toMatchObject({ status: 'fail' });
+    expect((await env.owner('GET', `/v0/rejections?robot=${encodeURIComponent(sloppy.robot)}`)).body[0]).toMatchObject({ code: 'not_eligible' });
   });
 });
