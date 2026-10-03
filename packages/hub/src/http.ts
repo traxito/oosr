@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auditRobot } from './audit.js';
 import { Hub, HubError, type Principal } from './hub.js';
 
 type Auth = 'public' | 'any' | 'owner' | 'robot';
@@ -82,12 +83,12 @@ function routes(hub: Hub): Route[] {
     r('POST', '/v0/skills/fetch', 'owner', ({ body, res }) => ((res.statusCode = 201), hub.fetchSkill(body?.ref, body?.version))),
     r('GET', '/v0/skills/(.+)@([0-9.]+)', 'any', ({ params }) => hub.getSkill(params[0]!, params[1]!)),
     r('DELETE', '/v0/skills/(.+)@([0-9.]+)', 'owner', ({ params }) => (hub.removeSkill(params[0]!, params[1]!), { ok: true })),
-    r('GET', '/v0/publishers/keys', 'owner', () => hub.pinnedKeys()),
-    r('POST', '/v0/publishers/keys', 'owner', ({ body }) => (hub.pinPublisherKey(body?.kid, body?.jwk), { ok: true })),
+    r('GET', '/v0/trust/keys', 'owner', () => hub.pinnedKeys()),
+    r('POST', '/v0/trust/keys', 'owner', ({ body }) => (hub.pinKey(body?.kid, body?.jwk), { ok: true })),
 
     // Spec 5: pairing (RFC 8628), robots, policy
-    r('POST', '/v0/pair/device', 'public', ({ body, req }) => {
-      const out = hub.startPairing(body);
+    r('POST', '/v0/pair/device', 'public', async ({ body, req }) => {
+      const out = await hub.startPairing(body);
       const base = `http://${req.headers.host}`;
       return { ...out, verification_uri: `${base}/app/#/pair`, verification_uri_complete: `${base}/app/#/pair/${out.user_code}` };
     }),
@@ -100,6 +101,8 @@ function routes(hub: Hub): Route[] {
     r('POST', '/v0/pair/deny', 'owner', ({ body }) => (hub.denyPairing(body?.user_code), { ok: true })),
     r('GET', '/v0/robots', 'owner', () => hub.listRobots()),
     r('PUT', '/v0/robots/me/capability', 'robot', ({ principal, body }) => (hub.updateCapability(principal!, body), { ok: true })),
+    r('GET', `/v0/robots/${P}/audit`, 'owner', ({ params }) => auditRobot(hub, params[0]!)),
+    r('GET', '/v0/rejections', 'owner', ({ query }) => hub.listRejections(query.get('robot') ?? undefined)),
     r('DELETE', `/v0/robots/${P}`, 'owner', ({ params }) => (hub.revokeRobot(params[0]!), { ok: true })),
     r('GET', '/v0/policy', 'owner', () => hub.getPolicy()),
     r('PUT', '/v0/policy', 'owner', ({ body }) => hub.setPolicy(body)),

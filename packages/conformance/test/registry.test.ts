@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildDidDocument, generateKeyPair, signSkill, toPublicJwk, type SkillManifest } from '@oosr/core';
 import { Hub } from '@oosr/hub';
-import { KNOWLEDGE, acmeCapability, ficusManifest } from './harness.js';
+import { EXTERNAL, KNOWLEDGE, acmeCapability, ficusManifest } from './harness.js';
 
 const DID = 'did:web:traxito.github.io:oosr';
 const KID = `${DID}#key-1`;
@@ -35,17 +35,17 @@ async function communityRegistry() {
   return { fetchImpl, requested, sign };
 }
 
-describe('community registry via did:web', () => {
+describe.skipIf(EXTERNAL)('community registry via did:web (reference hub)', () => {
   it('enrolment with a GS1-provided skill ref installs it from the publisher registry', async () => {
     const { fetchImpl, requested } = await communityRegistry();
     const { hub } = await Hub.init(mkdtempSync(join(tmpdir(), 'oosr-reg-')), { scopeId: 'hub-reg', policy: { trusted_publishers: [DID] }, fetchImpl });
     const { privateJwk } = await generateKeyPair();
-    const { user_code } = hub.startPairing({ capability: acmeCapability(), public_jwk: toPublicJwk(privateJwk) });
+    const { user_code } = await hub.startPairing({ capability: acmeCapability(), public_jwk: toPublicJwk(privateJwk) });
     hub.approvePairing(user_code);
     const robot = { kind: 'robot' as const, robot: acmeCapability().robot };
 
     const e = hub.proposeEnrolment(robot, { tag_family: 'tag36h11', tag_id: 37, tag_size_mm: 30, proposed_type: 'plant/ficus-lyrata', skills: [{ ref: REF }] });
-    const { object, skill_errors } = await hub.confirmEnrolment(e.id, { attributes: { pot_volume_l: 3 }, zone: 'salon' });
+    const { object, skill_errors } = await hub.confirmEnrolment(e.id, { attributes: { pot_volume_l: 3 }, zone: 'living-room' });
     expect(skill_errors).toEqual([]);
     expect(requested).toContain('https://traxito.github.io/oosr/did.json');
     expect(hub.listSkills().map((s) => `${s.id}@${s.version}`)).toEqual([`${REF}@1.0.0`]);
@@ -59,7 +59,7 @@ describe('community registry via did:web', () => {
     const { fetchImpl, requested } = await communityRegistry();
     const { hub } = await Hub.init(mkdtempSync(join(tmpdir(), 'oosr-reg-')), { scopeId: 'hub-reg', policy: { trusted_publishers: [] }, fetchImpl });
     const { privateJwk } = await generateKeyPair();
-    const { user_code } = hub.startPairing({ capability: acmeCapability(), public_jwk: toPublicJwk(privateJwk) });
+    const { user_code } = await hub.startPairing({ capability: acmeCapability(), public_jwk: toPublicJwk(privateJwk) });
     hub.approvePairing(user_code);
     const e = hub.proposeEnrolment({ kind: 'robot', robot: acmeCapability().robot }, {
       tag_family: 'tag36h11', tag_id: 37, tag_size_mm: 30, proposed_type: 'plant/ficus-lyrata', skills: [{ ref: REF }],

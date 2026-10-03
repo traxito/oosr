@@ -36,7 +36,14 @@
       "additionalProperties": false
     },
     "timezone": { "type": "string", "description": "IANA zone used for quiet_hours and season. Defaults to the hub's system zone." },
-    "hemisphere": { "enum": ["north", "south"], "description": "Skill seasons are written for the northern hemisphere; south shifts them by 6 months." }
+    "hemisphere": { "enum": ["north", "south"], "description": "Skill seasons are written for the northern hemisphere; south shifts them by 6 months." },
+    "trusted_manufacturers": {
+      "type": "object",
+      "description": "Robot URN vendor segment -> did:web of the manufacturer that issues its device certificates.",
+      "propertyNames": { "pattern": "^[a-z0-9-]+$" },
+      "additionalProperties": { "type": "string", "pattern": "^did:web:" }
+    },
+    "require_device_cert": { "type": "boolean", "description": "Refuse to pair robots without a valid device certificate." }
   },
   "additionalProperties": false
 }

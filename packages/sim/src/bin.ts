@@ -9,10 +9,13 @@ import { SimRobot, type SimWorld } from './robot.js';
 const USAGE = `oosr-sim — simulated OOSR robot
 
 Usage:
+  oosr-sim keygen  --robot urn:oosr:robot:acme:sn-88412 [--out .oosr/robot-key.json]
+                   (writes the robot key and prints its public JWK for the manufacturer's certificate)
   oosr-sim pair    --hub http://127.0.0.1:7400 --robot urn:oosr:robot:acme:sn-88412 --model acme/helper-arm-2
                    --primitives navigate_to,inspect,measure:soil_moisture,dispense:water,notify_human
                    [--limit dispense_max_ml=1000 ...] [--profile .oosr/robot.json]
-  oosr-sim see     --tag 37 [--size 30] --type plant/ficus-lyrata [--confidence 0.82] [--zone salon]
+                   [--key .oosr/robot-key.json] [--device-cert cert.jwt]
+  oosr-sim see     --tag 37 [--size 30] --type plant/ficus-lyrata [--confidence 0.82] [--zone living-room]
                    [--skill skill:traxito.github.io/oosr/ficus-lyrata-care] [--profile ...]
   oosr-sim world   --tag 37 [--moisture 0.12] [--spots true|false] [--world .oosr/world.json]
   oosr-sim run     [--every 30] [--profile ...] [--world .oosr/world.json]
@@ -45,6 +48,9 @@ const { positionals, values } = parseArgs({
     moisture: { type: 'string' },
     spots: { type: 'string' },
     every: { type: 'string' },
+    key: { type: 'string' },
+    out: { type: 'string', default: '.oosr/robot-key.json' },
+    'device-cert': { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -75,6 +81,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === 'keygen') {
+    if (!values.robot) throw new Error('--robot is required');
+    if (existsSync(values.out!)) throw new Error(`${values.out} exists; refusing to overwrite a key`);
+    const { privateJwk, publicJwk } = await generateKeyPair(`${values.robot}#att`);
+    writeJson(values.out!, privateJwk);
+    process.stdout.write(`private key -> ${values.out}\npublic JWK (give it to the manufacturer):\n${JSON.stringify(publicJwk)}\n`);
+    return;
+  }
+
   if (cmd === 'pair') {
     if (!values.robot || !values.model || !values.primitives) throw new Error('--robot, --model and --primitives are required');
     const limits = Object.fromEntries((values.limit ?? []).map((l) => {
@@ -88,11 +103,15 @@ async function main(): Promise<void> {
       primitives: values.primitives.split(',').map((s) => s.trim()).filter(Boolean),
       ...(Object.keys(limits).length ? { limits } : {}),
     };
-    const { privateJwk } = await generateKeyPair(`${values.robot}#att`);
+    const privateJwk = values.key ? readJson<PrivateJwk>(values.key) : (await generateKeyPair(`${values.robot}#att`)).privateJwk;
+    const deviceCert = values['device-cert'] ? readFileSync(values['device-cert'], 'utf8').trim() : undefined;
     const c = new RobotClient({ hub: values.hub!, capability, key: privateJwk });
-    const token = await c.pair((code, uri) => {
-      process.stdout.write(`Approve this robot in the app with code  ${code}\n  ${uri}\n`);
-    });
+    const token = await c.pair(
+      (code, uri) => {
+        process.stdout.write(`Approve this robot in the app with code  ${code}\n  ${uri}\n`);
+      },
+      deviceCert ? { deviceCert } : {},
+    );
     const info = await c.info();
     writeJson(values.profile!, { hub: values.hub, capability, key: privateJwk, token, scope_id: info.scope_id } satisfies Profile);
     process.stdout.write(`Paired with ${info.hub}. Profile saved to ${values.profile} (contains the robot private key).\n`);

@@ -97,6 +97,11 @@ async function taskTitle(ref, task) {
 
 // ------------------------------------------------------------------ formatting
 
+const attestationChip = (a) =>
+  a
+    ? h('div', { class: 'chips' }, chip(`✓ ${t('certified_by')} ${a.iss.replace(/^did:web:/, '')}${a.key_storage ? ` · ${a.key_storage}` : ''}`, 'ok'))
+    : h('div', { class: 'chips' }, chip(`⚠ ${t('no_device_cert')}`, 'warn'));
+
 const shortUrn = (urn) => urn?.split(':').slice(-2).join(':') ?? '';
 const robotLabel = (urn) => (urn ? urn.replace(/^urn:oosr:robot:/, '').replace(':', ' · ') : '');
 const pct = (v) => `${Math.round(v * 100)} %`;
@@ -190,7 +195,7 @@ async function viewHome(root, pairCode) {
         h('p', { class: 'muted small' }, t('pair_check')),
         h('div', { class: 'row' }, h('strong', {}, p.capability.model), h('span', { class: 'muted mono' }, robotLabel(p.capability.robot))),
         h('div', { class: 'chips' }, p.capability.primitives.map((x) => chip(x))),
-        p.device_cert ? null : h('p', { class: 'muted small' }, '⚠ device certificate not provided'),
+        attestationChip(p.device_attestation),
         h(
           'div',
           { class: 'actions' },
@@ -204,7 +209,7 @@ async function viewHome(root, pairCode) {
   for (const e of enrolments) {
     const name = h('input', { placeholder: e.proposed_type.split('/').pop() });
     const type = h('input', { value: e.proposed_type });
-    const zone = h('input', { value: e.zone ?? '', placeholder: 'salon' });
+    const zone = h('input', { value: e.zone ?? '', placeholder: 'living-room' });
     const pot = h('input', { type: 'number', min: '0', step: '0.5', placeholder: '3' });
     inbox.push(
       card(
@@ -395,6 +400,30 @@ async function viewObject(root, urn) {
   );
 }
 
+/** Robot-role conformance report, loaded on demand. */
+function auditBox(robot) {
+  const box = h('div', { class: 'audit' });
+  const run = async () => {
+    box.replaceChildren(h('p', { class: 'muted small' }, '…'));
+    try {
+      const report = await api('GET', `/v0/robots/${enc(robot)}/audit`);
+      const icon = { pass: '✓', warn: '!', fail: '✗' };
+      box.replaceChildren(
+        h('div', { class: 'row' }, h('strong', {}, t('audit_title')), chip(report.ok ? t('audit_ok') : t('audit_bad'), report.ok ? 'ok' : 'warn')),
+        h(
+          'ul',
+          { class: 'checks' },
+          report.checks.map((c) => h('li', { class: `check-${c.status}` }, h('span', { class: 'mono' }, `${icon[c.status]} ${c.id}`), h('span', { class: 'muted small' }, c.detail))),
+        ),
+      );
+    } catch (e) {
+      box.replaceChildren(h('p', { class: 'error' }, e.message));
+    }
+  };
+  box.append(h('button', { onclick: run }, t('audit_run')));
+  return box;
+}
+
 async function viewRobots(root) {
   const robots = await api('GET', '/v0/robots');
   root.append(
@@ -408,12 +437,14 @@ async function viewRobots(root) {
               card(
                 h('div', { class: 'row' }, h('strong', {}, r.capability.model), r.revoked_at ? chip(t('revoked'), 'warn') : chip('●', 'ok')),
                 h('p', { class: 'muted small mono' }, r.robot),
+                attestationChip(r.device_attestation),
                 h('div', { class: 'kv' }, h('span', {}, t('primitives')), h('div', { class: 'chips' }, r.capability.primitives.map((x) => chip(x)))),
                 r.capability.limits
                   ? h('div', { class: 'kv' }, h('span', {}, t('limits')), h('div', { class: 'chips' }, Object.entries(r.capability.limits).map(([k, v]) => chip(`${k}=${v}`))))
                   : null,
                 h('div', { class: 'kv' }, h('span', {}, t('scopes')), h('div', { class: 'chips' }, (r.policy.write ?? []).map((x) => chip(x, 'accent')))),
                 h('div', { class: 'kv' }, h('span', {}, t('zones')), h('div', {}, (r.policy.zones ?? []).join(', ') || t('all_zones'))),
+                auditBox(r.robot),
                 r.revoked_at
                   ? null
                   : h(
@@ -496,6 +527,8 @@ async function viewSettings(root) {
   const savePolicy = (next) => act(async () => (await api('PUT', '/v0/policy', next), toast(t('saved'))));
 
   const newPub = h('input', { placeholder: COMMUNITY_PUBLISHER });
+  const vendor = h('input', { placeholder: 'acme' });
+  const maker = h('input', { placeholder: 'did:web:acme.example' });
   const from = h('input', { type: 'time', value: policy.quiet_hours?.from ?? '' });
   const to = h('input', { type: 'time', value: policy.quiet_hours?.to ?? '' });
   const tz = h('input', { value: policy.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone });
@@ -534,6 +567,61 @@ async function viewSettings(root) {
             { onclick: () => /^did:web:/.test(newPub.value.trim()) && savePolicy({ ...policy, trusted_publishers: [...new Set([...policy.trusted_publishers, newPub.value.trim()])] }) },
             t('add'),
           ),
+        ),
+      ),
+    ),
+    section(
+      t('settings_devices'),
+      card(
+        h('p', { class: 'muted small' }, t('settings_devices_help')),
+        h(
+          'ul',
+          { class: 'list' },
+          Object.entries(policy.trusted_manufacturers ?? {}).map(([vendor, did]) =>
+            h(
+              'li',
+              { class: 'row' },
+              h('span', { class: 'mono' }, `${vendor} → ${did}`),
+              h(
+                'button',
+                {
+                  class: 'link',
+                  onclick: () => {
+                    const next = { ...(policy.trusted_manufacturers ?? {}) };
+                    delete next[vendor];
+                    savePolicy({ ...policy, trusted_manufacturers: next });
+                  },
+                },
+                t('remove'),
+              ),
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { class: 'grid2' },
+          h('label', {}, t('vendor'), vendor),
+          h('label', {}, t('manufacturer_did'), maker),
+        ),
+        h(
+          'div',
+          { class: 'actions' },
+          h(
+            'button',
+            {
+              onclick: () =>
+                /^[a-z0-9-]+$/.test(vendor.value.trim()) &&
+                /^did:web:/.test(maker.value.trim()) &&
+                savePolicy({ ...policy, trusted_manufacturers: { ...(policy.trusted_manufacturers ?? {}), [vendor.value.trim()]: maker.value.trim() } }),
+            },
+            t('add'),
+          ),
+        ),
+        h(
+          'label',
+          { class: 'check' },
+          h('input', { type: 'checkbox', checked: policy.require_device_cert === true, onchange: (e) => savePolicy({ ...policy, require_device_cert: e.target.checked }) }),
+          t('require_device_cert'),
         ),
       ),
     ),

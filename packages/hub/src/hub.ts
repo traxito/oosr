@@ -28,7 +28,9 @@ import {
   validate,
   verifyEvent,
   verifySkillPackage,
+  verifyDeviceCert,
   type Binding,
+  type DeviceAttestation,
   type CapabilityManifest,
   type HomePolicy,
   type ObjectDescription,
@@ -40,9 +42,9 @@ import {
   type SkillRef,
   type Task,
 } from '@oosr/core';
-import { PublisherResolver } from './publishers.js';
+import { TrustResolver } from './trust.js';
 import { DEFAULT_ROBOT_WRITE, canWrite, inQuietHours, zoneAllowed } from './policy.js';
-import { Store, type Approval, type Enrolment, type HubIdentity, type MutableState, type PairingRequest, type RobotRecord } from './store.js';
+import { Store, type Approval, type Enrolment, type HubIdentity, type MutableState, type PairingRequest, type Rejection, type RobotRecord } from './store.js';
 
 export class HubError extends Error {
   constructor(
@@ -68,6 +70,7 @@ export interface InitOptions extends HubOptions {
 
 export interface Lease {
   robot: string;
+  task: string;
   started_id: string;
   expires_at: string;
 }
@@ -102,11 +105,15 @@ const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const token = (prefix: string) => `${prefix}_${randomBytes(24).toString('base64url')}`;
 const bindingKey = (family: string, tag: number) => `${family}#${tag}`;
-const leaseKey = (object: string, task: string) => `${object}|${task}`;
+/**
+ * Tasks with a physical effect share one exclusive lease per object (watering and moving the same
+ * pot at once is a conflict); tasks without physical effect lease per (object, task).
+ */
+const leaseKey = (object: string, task: Task) => (taskIsPhysical(task) ? `${object}|#physical` : `${object}|${task.name}`);
 
 export class Hub {
   readonly identity: HubIdentity;
-  readonly publishers: PublisherResolver;
+  readonly trust: TrustResolver;
   private state: MutableState;
   private events: OosrEvent[] = [];
   private byId = new Map<string, OosrEvent>();
@@ -115,6 +122,7 @@ export class Hub {
   private projections = new Map<string, ObjectState>();
   private leases = new Map<string, Lease>();
   private skills = new Map<string, Map<string, SkillPackage>>();
+  private rejections: Rejection[] = [];
   private lamport = 0;
   private listeners = new Set<(m: HubMessage) => void>();
   private readonly now: () => Date;
@@ -126,7 +134,8 @@ export class Hub {
     this.now = opts.now ?? (() => new Date());
     this.identity = store.identity();
     this.state = store.loadState();
-    this.publishers = new PublisherResolver(() => this.state.pinned_keys, opts.fetchImpl);
+    this.trust = new TrustResolver(() => this.state.pinned_keys, opts.fetchImpl);
+    this.rejections = store.loadRejections();
     for (const pkg of store.loadSkills()) this.indexSkill(pkg);
     for (const ev of store.loadEvents().sort(compareEvents)) this.apply(ev, new Date(ev.time));
   }
@@ -280,7 +289,7 @@ export class Hub {
       throw new HubError(403, 'untrusted_publisher', `${publisher} is not in trusted_publishers`);
     }
     try {
-      await verifySkillPackage(pkg, (kid) => this.publishers.key(kid));
+      await verifySkillPackage(pkg, (kid) => this.trust.key(kid));
     } catch (e) {
       throw new HubError(422, 'invalid_skill', (e as Error).message);
     }
@@ -298,7 +307,7 @@ export class Hub {
   async fetchSkill(ref: string, version?: string): Promise<SkillManifest> {
     let pkg: SkillPackage;
     try {
-      pkg = await this.publishers.fetchPackage(ref, version);
+      pkg = await this.trust.fetchPackage(ref, version);
     } catch (e) {
       throw new HubError(502, 'registry_error', (e as Error).message);
     }
@@ -331,7 +340,8 @@ export class Hub {
     return candidates.filter((p) => typeSpecificity(p.manifest, object.type) === best);
   }
 
-  pinPublisherKey(kid: string, jwk: PublicJwk): void {
+  /** Pins a did:web key (publisher or manufacturer) so it verifies without network access. */
+  pinKey(kid: string, jwk: PublicJwk): void {
     if (!/^did:web:.+#.+$/.test(kid)) throw new HubError(422, 'invalid_kid', 'kid must be did:web:...#fragment');
     if (jwk?.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) throw new HubError(422, 'invalid_jwk', 'expected an EC P-256 public JWK');
     this.state.pinned_keys[kid] = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
@@ -356,7 +366,7 @@ export class Hub {
     return this.skillsFor(object).flatMap(({ manifest }) =>
       manifest.tasks.map((task) => {
         const match = robot ? matchTask(task, robot.capability, object) : undefined;
-        const lease = this.liveLease(urn, task.name, now);
+        const lease = this.liveLease(urn, task, now);
         const trig = task.trigger ? evaluate(task.trigger, ctx) : true;
         const pre = evaluateAll(task.preconditions, ctx);
         const view: TaskView = {
@@ -380,7 +390,7 @@ export class Hub {
     );
   }
 
-  private liveLease(object: string, task: string, now: Date): Lease | undefined {
+  private liveLease(object: string, task: Task, now: Date): Lease | undefined {
     const l = this.leases.get(leaseKey(object, task));
     return l && new Date(l.expires_at) > now ? l : undefined;
   }
@@ -393,6 +403,34 @@ export class Hub {
    * season, quiet hours, approval and lease.
    */
   async appendRobotEvent(principal: Principal, ev: OosrEvent): Promise<{ event: OosrEvent; duplicate: boolean }> {
+    try {
+      return await this.intake(principal, ev);
+    } catch (e) {
+      if (e instanceof HubError && principal.kind === 'robot') this.recordRejection(principal.robot, e, ev);
+      throw e;
+    }
+  }
+
+  /** Refused robot writes, newest last. Audits use them: a conformant robot rarely triggers these. */
+  listRejections(robot?: string): Rejection[] {
+    return this.rejections.filter((r) => !robot || r.robot === robot);
+  }
+
+  private recordRejection(robot: string, e: HubError, ev: OosrEvent | undefined): void {
+    const r: Rejection = {
+      at: this.now().toISOString(),
+      robot,
+      code: e.code,
+      message: e.message,
+      ...(typeof ev?.id === 'string' ? { event_id: ev.id } : {}),
+      ...(typeof ev?.type === 'string' ? { type: ev.type } : {}),
+      ...(typeof ev?.subject === 'string' ? { subject: ev.subject } : {}),
+    };
+    this.rejections.push(r);
+    this.store.appendRejection(r);
+  }
+
+  private async intake(principal: Principal, ev: OosrEvent): Promise<{ event: OosrEvent; duplicate: boolean }> {
     if (principal.kind !== 'robot') throw new HubError(403, 'robots_only', 'only paired robots append events; humans act through the app endpoints');
     const v = validate('event', ev);
     if (!v.valid) throw new HubError(422, 'invalid_event', v.errors.join('; '));
@@ -446,13 +484,14 @@ export class Hub {
         throw new HubError(403, 'not_eligible', `robot not eligible for ${tt.task}: missing [${match.missing}] exceeded [${match.exceeded}]`);
       }
       const physical = taskIsPhysical(task);
-      const key = leaseKey(object.id, task.name);
-      const current = this.leases.get(key);
+      const current = this.leases.get(leaseKey(object.id, task));
 
       if (tt.phase === 'started') {
-        const live = this.liveLease(object.id, task.name, now);
-        const renewal = live?.robot === robot.robot;
-        if (live && !renewal) throw new HubError(409, 'lease_conflict', `${task.name} on this object is leased by ${live.robot} until ${live.expires_at}`);
+        const live = this.liveLease(object.id, task, now);
+        const renewal = live?.robot === robot.robot && live.task === task.name;
+        if (live && !renewal) {
+          throw new HubError(409, 'lease_conflict', `object is leased by ${live.robot} for ${live.task} until ${live.expires_at}`);
+        }
         if (!inSeason(task, now, { hemisphere: policy.hemisphere, timeZone: policy.timezone })) {
           throw new HubError(403, 'out_of_season', `${task.name} is out of season`);
         }
@@ -460,8 +499,8 @@ export class Hub {
         if (!renewal && taskNeedsApproval(task, policy)) {
           consume = this.checkApproval(ev, task, skill!, robot.robot);
         }
-      } else if (physical || current) {
-        if (!current || current.robot !== robot.robot) {
+      } else if (physical || current?.task === task.name) {
+        if (!current || current.robot !== robot.robot || current.task !== task.name) {
           throw new HubError(409, 'no_lease', `${tt.phase} without a run started by this robot (lease missing or taken over)`);
         }
       }
@@ -500,11 +539,12 @@ export class Hub {
 
   // ---------------------------------------------------------------- pairing (RFC 8628)
 
-  startPairing(body: { capability: CapabilityManifest; public_jwk: PublicJwk; device_cert?: string }) {
+  async startPairing(body: { capability: CapabilityManifest; public_jwk: PublicJwk; device_cert?: string }) {
     const v = validate('capability', body?.capability);
     if (!v.valid) throw new HubError(422, 'invalid_capability', v.errors.join('; '));
     const jwk = body.public_jwk;
     if (jwk?.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) throw new HubError(422, 'invalid_jwk', 'expected an EC P-256 public JWK');
+    const attestation = await this.attest(body);
     const deviceCode = randomBytes(32).toString('base64url');
     const bytes = randomBytes(8);
     const raw = [...bytes].map((b) => USER_CODE_ALPHABET[b % USER_CODE_ALPHABET.length]).join('');
@@ -517,13 +557,44 @@ export class Hub {
       capability: body.capability,
       public_jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y },
       ...(body.device_cert ? { device_cert: body.device_cert } : {}),
+      ...(attestation ? { device_attestation: attestation } : {}),
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + PAIRING_TTL_S * 1000).toISOString(),
       status: 'pending',
     });
     this.save();
     this.notify({ kind: 'inbox', what: 'pairing' });
-    return { device_code: deviceCode, user_code: userCode, expires_in: PAIRING_TTL_S, interval: 2 };
+    return {
+      device_code: deviceCode,
+      user_code: userCode,
+      expires_in: PAIRING_TTL_S,
+      interval: 2,
+      device_attestation: attestation ?? null,
+    };
+  }
+
+  /**
+   * Verifies the manufacturer's device certificate, if any. An invalid certificate always fails
+   * pairing; a missing one fails only when the policy requires certificates.
+   */
+  private async attest(body: { capability: CapabilityManifest; public_jwk: PublicJwk; device_cert?: string }): Promise<DeviceAttestation | undefined> {
+    const policy = this.state.policy;
+    if (!body.device_cert) {
+      if (policy.require_device_cert) throw new HubError(403, 'device_cert_required', 'this household only pairs robots with a valid device certificate');
+      return undefined;
+    }
+    try {
+      const claims = await verifyDeviceCert(body.device_cert, (kid) => this.trust.key(kid), {
+        robot: body.capability.robot,
+        model: body.capability.model,
+        publicJwk: body.public_jwk,
+        manufacturers: policy.trusted_manufacturers ?? {},
+        now: this.now(),
+      });
+      return { iss: claims.iss, ...(claims.key_storage ? { key_storage: claims.key_storage } : {}), verified_at: this.now().toISOString() };
+    } catch (e) {
+      throw new HubError(422, 'invalid_device_cert', (e as Error).message);
+    }
   }
 
   pollPairing(deviceCode: string): { access_token: string; token_type: 'Bearer'; robot: string; hub: string; scope_id: string } {
@@ -557,6 +628,7 @@ export class Hub {
       token_sha256: sha256(robotToken),
       paired_at: this.now().toISOString(),
       ...(req.device_cert ? { device_cert: req.device_cert } : {}),
+      ...(req.device_attestation ? { device_attestation: req.device_attestation } : {}),
     };
     this.state.robots[record.robot] = record;
     const robots = (this.state.policy.robots ??= {});
@@ -867,12 +939,19 @@ export class Hub {
     }
 
     const tt = parseTaskType(ev.type);
-    if (tt) {
-      const key = leaseKey(ev.subject, tt.task);
+    const task = tt && ev.oosrskill ? this.findSkill(ev.oosrskill)?.manifest.tasks.find((t) => t.name === tt.task) : undefined;
+    if (tt && task) {
+      const key = leaseKey(ev.subject, task);
+      const held = this.leases.get(key);
       if (tt.phase === 'started') {
         const leaseS = typeof ev.data.lease_s === 'number' ? ev.data.lease_s : DEFAULT_LEASE_S;
-        this.leases.set(key, { robot: ev.source, started_id: ev.id, expires_at: new Date(receivedAt.getTime() + leaseS * 1000).toISOString() });
-      } else if (this.leases.get(key)?.robot === ev.source) {
+        this.leases.set(key, {
+          robot: ev.source,
+          task: task.name,
+          started_id: ev.id,
+          expires_at: new Date(receivedAt.getTime() + leaseS * 1000).toISOString(),
+        });
+      } else if (held?.robot === ev.source && held.task === task.name) {
         this.leases.delete(key);
       }
     }

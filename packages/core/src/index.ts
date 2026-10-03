@@ -12,3 +12,4 @@ export * from './events.js';
 export * from './state.js';
 export * from './skill.js';
 export * from './did.js';
+export * from './device.js';
